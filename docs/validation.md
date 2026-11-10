@@ -28,6 +28,9 @@ Status: **qualification in progress; stable acceptance has not been claimed**.
 - Setting the maximum transmit power to 8.5 dBm made the hotspot discoverable; the user confirmed it appeared on their phone. The Mac then completed certificate-pinned HTTPS login and status reads.
 - The first real OTA cycle passed: rc.3 in ota_0 → rc.4 in ota_1, full image/signature verification, updater ticket reconnection and confirmation at 30.693 seconds after boot. The existing administrator/hotspot credentials remained usable, settings were healthy, and rollback became available.
 - Later firmware refinements still require the repeated-cycle and soak gates; this first cycle is not a complete stability claim.
+- Real-board checks rejected 27 authentication, CSRF, concurrency, bounds, transfer, compatibility and signature cases, including a complete image signed with a disposable wrong RSA key. The running rc.5 image and saved settings were retained.
+- Actual Chromium desktop/mobile viewport checks completed a browser OTA to rc.6. Serial monitoring then caught an idle-task watchdog reset during successive TLS handshakes and password verification. This invalidates a stability claim for that revision, even though the browser showed successful installation. The decoded stack was in the TLS elliptic-curve handshake. Explicit scheduling yields at TLS-session and HTTP-request boundaries are being qualified; neither watchdog is disabled. The repeated-cycle gate will use rebuilt images after this correction.
+- Hotspot-only management with an unavailable configured uplink passed, and the supplied uplink was restored. No physical power removal occurred during the first cue window; that expired attempt does not count as a power-loss test.
 
 ## Acceptance gates still open
 

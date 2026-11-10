@@ -177,6 +177,10 @@ static bool update_ticket(httpd_req_t *r, char out[65])
 
 static esp_err_t route(httpd_req_t *r)
 {
+    /* TLS handshakes followed by the deliberately expensive password KDF can
+       otherwise keep this task runnable across the idle-watchdog deadline.
+       Yield between bounded operations; retain both idle and health watchdogs. */
+    vTaskDelay(1);
     const char *uri = r->uri;
     if (r->method == HTTP_GET &&
         (!strcmp(uri, "/") || !strcmp(uri, "/app.js") || !strcmp(uri, "/style.css"))) {
@@ -352,9 +356,17 @@ static esp_err_t route(httpd_req_t *r)
     return error_response(r, "404 Not Found", "not_found", "Unknown operation or HTTP method.");
 }
 
+static void tls_session_boundary(esp_https_server_user_cb_arg_t *event)
+{
+    (void)event;
+    /* Browsers open several TLS sockets together, even before an HTTP route. */
+    vTaskDelay(1);
+}
+
 esp_err_t api_start(void)
 {
     httpd_ssl_config_t cfg = HTTPD_SSL_CONFIG_DEFAULT();
+    cfg.user_cb = tls_session_boundary;
     cfg.httpd.uri_match_fn = httpd_uri_match_wildcard;
     cfg.httpd.max_uri_handlers = 8;
     cfg.httpd.max_open_sockets = 3;
