@@ -38,6 +38,7 @@
         <div class="firmware-grid">
           <div>
             <dl class="properties"><div><dt>Running version</dt><dd id="version">—</dd></div><div><dt>Active slot</dt><dd id="slot">—</dd></div><div><dt>ESP-IDF</dt><dd id="idf">—</dd></div><div><dt>Previous image</dt><dd id="rollback-state">—</dd></div></dl>
+            <table class="slots"><caption>Application slots · 1.875 MiB each</caption><thead><tr><th scope="col">Slot</th><th scope="col">Version</th><th scope="col">State</th></tr></thead><tbody id="slot-details"></tbody></table>
             <div class="recovery"><button id="rollback" class="secondary" disabled>Roll back firmware</button><p class="muted">Restores the previous confirmed image. Network credentials are retained.</p></div>
           </div>
           <div class="update-area">
@@ -52,7 +53,7 @@
       <section id="network" class="section">
         <div class="section-heading"><h2><span>02</span> Network</h2><span id="network-badge" class="badge">Hotspot</span></div>
         <div class="network-grid"><div><h3>Device hotspot</h3><dl class="properties"><div><dt>Network name</dt><dd id="ap-ssid">—</dd></div><div><dt>Console address</dt><dd>192.168.4.1</dd></div><div><dt>Uplink address</dt><dd id="station-ip">Offline</dd></div></dl><p class="muted">The hotspot stays available when the uplink is unavailable. Changing uplink channels can briefly reconnect your Wi-Fi.</p></div>
-          <form id="network-form"><h3>Optional Internet connection</h3><label for="ssid">2.4 GHz Wi-Fi name</label><input id="ssid" name="ssid" autocomplete="off" maxlength="32"><label for="wifi-password">Wi-Fi password</label><input id="wifi-password" type="password" autocomplete="new-password" maxlength="63"><div class="action-row"><button class="secondary" type="submit">Save and connect</button><button id="disconnect" class="quiet" type="button">Disable uplink</button></div></form>
+          <form id="network-form"><h3>Optional Internet connection</h3><p id="station-detail" class="muted" aria-live="polite">Optional uplink is offline</p><label for="ssid">2.4 GHz Wi-Fi name</label><input id="ssid" name="ssid" autocomplete="off" maxlength="32"><label for="wifi-password">Wi-Fi password</label><input id="wifi-password" type="password" autocomplete="new-password" maxlength="63"><div class="action-row"><button class="secondary" type="submit">Save and connect</button><button id="disconnect" class="quiet" type="button">Disable uplink</button></div></form>
         </div>
       </section>
       <section id="diagnostics" class="section">

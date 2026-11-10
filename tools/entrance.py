@@ -448,7 +448,8 @@ def cmd_network(args):
 def cmd_check(args):
     device = Device(args.host)
     device.login()
-    device.request("POST", "/api/v1/releases/check")
+    body = {"version": validate_version(args.version)} if args.version else None
+    device.request("POST", "/api/v1/releases/check", body)
     deadline = time.monotonic() + 90
     time.sleep(2)
     while time.monotonic() < deadline:
@@ -543,8 +544,10 @@ def cmd_release(args):
     print("Verified release bundle:", directory)
     if args.publish:
         notes = LOCAL / "release-notes.md"
-        private_write(notes, f"Signed ESP32-C3 OTA firmware {tag}.\n\nSource: https://github.com/Achxy/203-entrance/tree/{head}\n\nInstall with the local console or `entrance upload`. Bootloader and partition-table updates require USB.\n")
+        status = "Qualification candidate; remaining hardware gates are documented in the source validation record.\n\n" if args.prerelease else ""
+        private_write(notes, f"{status}Signed ESP32-C3 OTA firmware {tag}.\n\nSource: https://github.com/Achxy/203-entrance/tree/{head}\n\nInstall with the local console or `entrance upload`. Bootloader and partition-table updates require USB.\n")
         run(["gh", "release", "create", tag, "--repo", RELEASE_REPO, "--title", tag, "--notes-file", notes,
+             *(["--prerelease"] if args.prerelease else []),
              *sorted(directory.iterdir())])
 
 
@@ -562,11 +565,14 @@ def cmd_audit(args):
             raise ValueError(f"Recovery policy violation: {option}")
     for option in ("SECURE_SIGNED_APPS_NO_SECURE_BOOT", "SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT",
                    "SECURE_SIGNED_APPS_RSA_SCHEME", "BOOTLOADER_APP_ROLLBACK_ENABLE",
-                   "ESP_COREDUMP_ENABLE_TO_FLASH", "ESPTOOLPY_FLASHSIZE_4MB"):
+                   "ESP_COREDUMP_ENABLE_TO_FLASH", "ESPTOOLPY_FLASHSIZE_4MB",
+                   "ESP_TASK_WDT_EN", "ESP_TASK_WDT_INIT", "ESP_TASK_WDT_PANIC"):
         if configuration.get(option) is not True:
             raise ValueError(f"Required firmware policy missing: {option}")
     if configuration.get("CJSON_NESTING_LIMIT") != 8:
         raise ValueError("JSON nesting limit must be bounded")
+    if configuration.get("ESP_TASK_WDT_TIMEOUT_S") != 15:
+        raise ValueError("Health task watchdog must reset an unresponsive trial after 15 seconds")
     rows = []
     for row in csv.reader((ROOT / "partitions.csv").read_text().splitlines()):
         if row and not row[0].strip().startswith("#"):
@@ -662,7 +668,10 @@ def main():
             p.add_argument("--disable", action="store_true")
         if name == "diagnostics": p.add_argument("--output", default=str(LOCAL / "diagnostics.json"))
         if name == "sign": p.add_argument("--output", required=True)
-        if name == "release": p.add_argument("--publish", action="store_true")
+        if name == "check": p.add_argument("--version", help="Explicit versioned release check; default checks latest stable")
+        if name == "release":
+            p.add_argument("--publish", action="store_true")
+            p.add_argument("--prerelease", action="store_true", help="Publish a qualification candidate excluded from automatic stable checks")
         if name == "soak":
             p.add_argument("--serial", action="store_true", help="Collect USB health telemetry while retaining the host Internet connection")
             p.add_argument("--minutes", type=int, default=60)

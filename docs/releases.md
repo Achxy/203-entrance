@@ -30,3 +30,5 @@ Checks run every six hours when online, with jitter; failed checks back off. The
 ## Version policy
 
 SemVer is limited to 31 ASCII characters to fit ESP-IDF's signed app descriptor. OTA requires a strictly newer version. Build metadata does not make an otherwise equal version newer. Prerelease versions support hardware qualification; only stable versions are published by the release command. Explicit administrator rollback is the supported path to the previous valid image. Arbitrary downgrade uploads are rejected.
+
+For end-to-end qualification before stable promotion, publish the same tagged, stable-version image with `release ... --publish --prerelease`. GitHub marks it as a qualification candidate, so automatic stable checks will not offer it. An administrator can explicitly run `entrance check --version 0.1.0`, followed by `entrance install`, to test its versioned public assets without placing a token on the board. Promote that unchanged release only after its required hardware gates pass; attach the resulting validation evidence. This preserves the exact tested image digest.

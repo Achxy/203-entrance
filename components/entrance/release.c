@@ -23,6 +23,7 @@ static _Atomic(SemaphoreHandle_t) release_mutex;
 static bool checking, check_requested, install_requested, installing;
 static char release_message[128] = "Offline: connect an optional Wi-Fi uplink to check GitHub";
 static int64_t next_check;
+static char requested_version[32];
 typedef struct {
     char location[2048];
 } redirect_t;
@@ -151,21 +152,28 @@ static bool verify_manifest(const uint8_t *bytes, size_t len, const uint8_t *sig
     psa_reset_key_attributes(&attrs);
     return result == PSA_SUCCESS;
 }
-static esp_err_t fetch_release(release_t *out)
+static esp_err_t fetch_release(release_t *out, const char *version)
 {
     uint8_t *body = calloc(1, 4097), sig[384];
     size_t len = 0, siglen = 0;
     if (!body)
         return ESP_ERR_NO_MEM;
-    esp_err_t err = small_download(RELEASE_BASE "latest/download/manifest.json", body, 4096, &len);
+    char base[192], url[224];
+    if (*version)
+        snprintf(base, sizeof(base), RELEASE_BASE "download/v%s/", version);
+    else
+        strlcpy(base, RELEASE_BASE "latest/download/", sizeof(base));
+    snprintf(url, sizeof(url), "%smanifest.json", base);
+    esp_err_t err = small_download(url, body, 4096, &len);
+    snprintf(url, sizeof(url), "%smanifest.sig", base);
     if (err == ESP_OK)
-        err =
-            small_download(RELEASE_BASE "latest/download/manifest.sig", sig, sizeof(sig), &siglen);
+        err = small_download(url, sig, sizeof(sig), &siglen);
     if (err == ESP_OK && !verify_manifest(body, len, sig, siglen))
         err = ESP_ERR_INVALID_CRC;
     if (err == ESP_OK) {
         release_manifest_t manifest;
-        if (!protocol_manifest((char *)body, len, &manifest))
+        if (!protocol_manifest((char *)body, len, &manifest) ||
+            (*version && strcmp(version, manifest.version)))
             err = ESP_ERR_INVALID_ARG;
         else {
             strlcpy(out->version, manifest.version, sizeof(out->version));
@@ -228,6 +236,9 @@ static void worker(void *unused)
         bool check =
             check_requested || (net_online() && esp_timer_get_time() >= next_check && !ota_busy());
         release_t release = available;
+        char version[32];
+        strlcpy(version, requested_version, sizeof(version));
+        requested_version[0] = 0;
         install_requested = check_requested = false;
         if (check && !install)
             checking = true;
@@ -246,7 +257,7 @@ static void worker(void *unused)
             xSemaphoreGive(release_mutex);
         } else if (check) {
             release_t candidate = {0};
-            esp_err_t err = fetch_release(&candidate);
+            esp_err_t err = fetch_release(&candidate, version);
             xSemaphoreTake(release_mutex, portMAX_DELAY);
             checking = false;
             if (err == ESP_OK) {
@@ -272,14 +283,22 @@ void release_start(void)
     if (!release_mutex || xTaskCreate(worker, "releases", 10240, NULL, 3, NULL) != pdPASS)
         abort();
 }
-esp_err_t release_check(void)
+esp_err_t release_check(const char *version)
 {
+    if (version) {
+        bool valid = false;
+        version_compare(version, version, &valid);
+        if (!valid || strchr(version, '-'))
+            return ESP_ERR_INVALID_VERSION;
+    }
     if (!release_mutex || !net_online() || ota_busy())
         return ESP_ERR_INVALID_STATE;
     xSemaphoreTake(release_mutex, portMAX_DELAY);
-    esp_err_t err = checking || installing ? ESP_ERR_INVALID_STATE : ESP_OK;
-    if (err == ESP_OK)
+    esp_err_t err = checking || check_requested || installing ? ESP_ERR_INVALID_STATE : ESP_OK;
+    if (err == ESP_OK) {
+        strlcpy(requested_version, version ? version : "", sizeof(requested_version));
         check_requested = true;
+    }
     xSemaphoreGive(release_mutex);
     return err;
 }

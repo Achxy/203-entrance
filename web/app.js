@@ -40,7 +40,7 @@ function controls() {
   $("upload").disabled = busy || !lastStatus?.ota?.healthy || !$("image").files.length;
   $("rollback").disabled = busy || !lastStatus?.rollback_available;
   $("check-release").disabled = busy || !lastStatus?.network?.online || Boolean(release?.checking);
-  $("install-release").disabled = busy || !lastStatus?.network?.online || !release?.verified;
+  $("install-release").disabled = busy || !lastStatus?.network?.online || !release?.verified || !release?.newer;
   $("image").disabled = busy;
   $("network-form").querySelectorAll("button,input").forEach((element) => { element.disabled = busy; });
 }
@@ -52,11 +52,19 @@ function render(status) {
   text("uptime", `${Math.floor(seconds / 3600)}h ${Math.floor(seconds / 60) % 60}m uptime`);
   text("version", status.version); text("slot", status.slot); text("idf", status.idf);
   text("rollback-state", status.rollback_available ? "Available" : "No confirmed previous image");
+  $("slot-details").replaceChildren(...(status.slots || []).map((slot) => {
+    const row = document.createElement("tr");
+    for (const value of [slot.slot + (slot.running ? " •" : ""), slot.version, slot.state]) {
+      const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
+    }
+    return row;
+  }));
   text("ota-phase", status.ota.phase);
   text("health-label", status.ota.trial ? "Trial boot — not confirmed" : !status.settings_healthy ? "Storage needs recovery" : status.ota.healthy ? "Services operational" : "Checking startup health");
   text("reset-reason", `Reset reason ${status.reset_reason}`);
   text("heap", bytes(status.free_heap)); text("minimum-heap", bytes(status.minimum_heap)); text("largest-block", bytes(status.largest_block));
   text("ap-ssid", status.network.ap_ssid); text("station-ip", status.network.station_ip);
+  text("station-detail", status.network.station_detail || (status.network.online ? "Connected" : "Optional uplink is offline"));
   text("network-badge", status.network.maintenance ? "Maintenance" : status.network.online ? "Hotspot + uplink" : "Hotspot only");
   if (document.activeElement !== $("ssid") && !$("ssid").value) $("ssid").value = status.network.station_ssid || "";
   controls();

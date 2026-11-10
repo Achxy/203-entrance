@@ -332,8 +332,15 @@ static esp_err_t route(httpd_req_t *r)
         return outcome(r, ota_rollback());
     if (!strcmp(uri, "/api/v1/releases") && r->method == HTTP_GET)
         return json_response(r, release_status(), "200 OK");
-    if (!strcmp(uri, "/api/v1/releases/check") && r->method == HTTP_POST)
-        return outcome(r, release_check());
+    if (!strcmp(uri, "/api/v1/releases/check") && r->method == HTTP_POST) {
+        cJSON *j = r->content_len ? read_json(r) : NULL;
+        const char *version = string_value(j, "version");
+        esp_err_t err = r->content_len && (!version || cJSON_GetArraySize(j) != 1)
+                            ? ESP_ERR_INVALID_ARG
+                            : release_check(version);
+        cJSON_Delete(j);
+        return outcome(r, err);
+    }
     if (!strcmp(uri, "/api/v1/releases/install") && r->method == HTTP_POST) {
         esp_err_t err = release_install(ticket);
         if (err != ESP_OK)

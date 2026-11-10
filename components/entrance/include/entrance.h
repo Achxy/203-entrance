@@ -66,6 +66,6 @@ void health_start(void);
 void health_set_services(bool ready);
 
 void release_start(void);
-esp_err_t release_check(void);
+esp_err_t release_check(const char *version);
 esp_err_t release_install(char ticket[65]);
 cJSON *release_status(void);

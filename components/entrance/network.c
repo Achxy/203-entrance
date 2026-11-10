@@ -6,9 +6,11 @@
 #include "esp_timer.h"
 #include "esp_log.h"
 #include <string.h>
+#include <time.h>
 
 static _Atomic bool online, ready, maintenance, station_enabled;
 static bool sntp_started;
+static _Atomic int disconnect_reason;
 static SemaphoreHandle_t network_mutex;
 static portMUX_TYPE ip_mutex = portMUX_INITIALIZER_UNLOCKED;
 static esp_timer_handle_t reconnect_timer;
@@ -30,6 +32,7 @@ static void event(void *arg, esp_event_base_t base, int32_t id, void *data)
     if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STOP)
         ready = false;
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        disconnect_reason = ((wifi_event_sta_disconnected_t *)data)->reason;
         online = false;
         portENTER_CRITICAL(&ip_mutex);
         strlcpy(station_ip, "offline", sizeof(station_ip));
@@ -50,6 +53,7 @@ static void event(void *arg, esp_event_base_t base, int32_t id, void *data)
         strlcpy(station_ip, address, sizeof(station_ip));
         portEXIT_CRITICAL(&ip_mutex);
         online = true;
+        disconnect_reason = 0;
         failures = 0;
         if (!sntp_started) {
             esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
@@ -170,6 +174,23 @@ cJSON *net_status(void)
     cJSON_AddNumberToObject(j, "settings_schema", snapshot.schema);
     cJSON_AddBoolToObject(j, "online", online);
     cJSON_AddBoolToObject(j, "maintenance", maintenance);
+    cJSON_AddNumberToObject(j, "disconnect_reason", disconnect_reason);
+    cJSON_AddNumberToObject(j, "unix_time", time(NULL));
+    cJSON_AddBoolToObject(j, "time_valid", time(NULL) >= 1700000000);
+    const char *status = !snapshot.enabled ? "Uplink disabled"
+                         : maintenance     ? "Disabled in maintenance mode"
+                         : online          ? "Connected"
+                                           : "Connecting; local hotspot remains available";
+    if (snapshot.enabled && !online && !maintenance) {
+        if (disconnect_reason == WIFI_REASON_NO_AP_FOUND)
+            status = "Network not found; check its name and 2.4 GHz band";
+        if (disconnect_reason == WIFI_REASON_AUTH_FAIL ||
+            disconnect_reason == WIFI_REASON_HANDSHAKE_TIMEOUT)
+            status = "Authentication failed; verify the uplink password";
+        if (disconnect_reason == WIFI_REASON_BEACON_TIMEOUT)
+            status = "Uplink signal lost; reconnecting";
+    }
+    cJSON_AddStringToObject(j, "station_detail", status);
     wifi_ap_record_t ap;
     if (online && esp_wifi_sta_get_ap_info(&ap) == ESP_OK)
         cJSON_AddNumberToObject(j, "rssi", ap.rssi);
