@@ -292,7 +292,8 @@ esp_err_t ota_confirm(const char *ticket)
 void ota_schedule_reboot(void)
 {
 #if ENTRANCE_TEST_FAULT == 4
-    reboot_at = esp_timer_get_time() + 60000000;
+    /* Give a human-operated power fixture a practical cue window. */
+    reboot_at = esp_timer_get_time() + 300000000;
 #else
     reboot_at = esp_timer_get_time() + 2000000;
 #endif

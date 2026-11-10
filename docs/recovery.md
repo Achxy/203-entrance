@@ -46,3 +46,5 @@ A 128 KiB `coredump` partition retains ESP-IDF ELF crash data. Save a full flash
 ## Power interruption validation
 
 A software reset is not a power interruption. Record unplug/replug or a measured switched-USB power cut separately, including its exact stage: receiving data, after verification/activation, or during pending trial. After restoring power, verify the running version, valid-slot metadata, settings and management access. Never claim that software-reset tests establish physical power-loss behavior.
+
+For a manual activation-stage test, install a qualification image built with `--fault activation` first. Its next accepted update waits five minutes after boot selection before the scheduled reboot, allowing an explicit unplug cue before the candidate's first boot. Production builds retain the normal two-second reboot delay. Cut well inside this window and record the timing; this tests post-selection recovery, not interruption of an individual flash-write instruction. Fault builds are rejected by release publication.
