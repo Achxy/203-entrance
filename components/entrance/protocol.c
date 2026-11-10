@@ -49,9 +49,8 @@ bool protocol_manifest(const char *bytes, size_t length, release_manifest_t *out
     bool ok = j && cJSON_GetArraySize(j) == 7 && integer(j, "format", 1) &&
               integer(j, "layout", ENTRANCE_LAYOUT) && integer(j, "schema", ENTRANCE_SCHEMA) &&
               cJSON_IsString(version) && strlen(version->valuestring) < sizeof(out->version) &&
-              !strchr(version->valuestring, '-') && cJSON_IsString(board) &&
-              !strcmp(board->valuestring, ENTRANCE_BOARD) && cJSON_IsNumber(size) &&
-              isfinite(size->valuedouble) && size->valuedouble >= 8192 &&
+              cJSON_IsString(board) && !strcmp(board->valuestring, ENTRANCE_BOARD) &&
+              cJSON_IsNumber(size) && isfinite(size->valuedouble) && size->valuedouble >= 8192 &&
               size->valuedouble <= ENTRANCE_SLOT_BYTES &&
               floor(size->valuedouble) == size->valuedouble &&
               (size_t)size->valuedouble % 4096 == 0 && cJSON_IsString(hash) &&
@@ -66,4 +65,18 @@ bool protocol_manifest(const char *bytes, size_t length, release_manifest_t *out
     }
     cJSON_Delete(j);
     return ok;
+}
+
+bool protocol_release_version_allowed(const char *version, const char *requested)
+{
+    if (!version)
+        return false;
+    bool valid = false;
+    version_compare(version, version, &valid);
+    if (!valid)
+        return false;
+    if (requested && *requested)
+        return !strcmp(version, requested);
+    const char *prerelease = strchr(version, '-'), *metadata = strchr(version, '+');
+    return !prerelease || (metadata && prerelease > metadata);
 }

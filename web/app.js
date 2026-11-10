@@ -189,8 +189,12 @@ $("check-release").addEventListener("click", async () => {
 $("install-release").addEventListener("click", async () => {
   if (!release?.verified || updating) return;
   updating = true; controls();
-  try { const job = await api("/releases/install", { method: "POST" }); await confirmUpdate(job.ticket, release.version, 480000); loginView(); }
-  catch (error) { notice(error.message, true); }
+  try {
+    const expected = release.version;
+    const job = await api("/releases/install", { method: "POST" });
+    sessionStorage.setItem("203-update", JSON.stringify({ ticket: job.ticket, expected, expires: Date.now()+480000 }));
+    await confirmUpdate(job.ticket, expected, 480000); loginView();
+  } catch (error) { notice(error.message, true); progress("Not confirmed", error.message); }
   finally { updating = false; controls(); }
 });
 $("rollback").addEventListener("click", async () => {

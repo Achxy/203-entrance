@@ -517,8 +517,8 @@ def cmd_release(args):
     cmd_audit(args)
     source = Path(args.image).resolve()
     metadata = image_metadata(source)
-    if "-" in metadata["version"]:
-        raise ValueError("Stable releases must not use prerelease versions")
+    if "-" in metadata["version"].split("+", 1)[0] and not args.prerelease:
+        raise ValueError("Prerelease versions require --prerelease")
     if run(["git", "status", "--porcelain"], capture=True).stdout.strip():
         raise ValueError("Release requires a clean source worktree")
     tag = "v" + metadata["version"]

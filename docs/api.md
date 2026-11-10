@@ -32,4 +32,4 @@ An installation is successful only when `/ota/status` reports `phase: "confirmed
 
 The inactive slot is not resumable: retry from `/ota/start` after an aborted or timed-out transfer. Do not blindly retry a mutation after a lost response; query status to determine whether it took effect. The supplied CLI implements the confirmation loop.
 
-An explicit release check may supply `{ "version": "0.1.0" }` to verify that version's public assets, including a GitHub qualification release. The authenticated request is still constrained to the configured repository and signed manifest; arbitrary URLs are never accepted. Automatic checks always return to the latest stable release. Images retain the strictly-newer version policy.
+An explicit release check may supply `{ "version": "0.1.0-rc.74" }` to verify that version's public assets, including a GitHub qualification release. The authenticated request is still constrained to the configured repository and signed manifest; arbitrary URLs are never accepted. Automatic checks always return to the latest stable release. Images retain the strictly-newer version policy.

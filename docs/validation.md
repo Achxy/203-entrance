@@ -12,7 +12,7 @@ Status: **qualification in progress; stable acceptance has not been claimed**.
 
 ## Automated evidence
 
-- 30 host test methods pass, with additional subcases: actual C SemVer/compatibility/CRC/hex logic, actual C request/manifest parser, authentication/throttling/CSRF policy, copy-on-write settings selection and schema compatibility, RSA manifest verification and wrong-key/tampered/truncated cases.
+- 31 host test methods pass, with additional subcases: actual C SemVer/compatibility/CRC/hex logic, actual C request/manifest parser, authentication/throttling/CSRF policy, copy-on-write settings selection and schema compatibility, RSA manifest verification and wrong-key/tampered/truncated cases.
 - The production `ota.c` runs in a native harness with simulated flash, time, mutexes and native-verification outcomes. It covers concurrent starts, bounds/offsets, transfer timeout, image incompatibility/downgrade, digest/signature/write/journal/activation failure, continuous health, scoped ticket, deadline, unavailable rollback, and reset windows. Hash and flash doubles do not establish real flash/RSA/power-loss behavior.
 - Signed ESP-IDF builds pass native `espsecure` verification and slot limits. The tested rc.2 image is 1,118,208 bytes, leaving 847,872 bytes in each slot, including signature padding.
 - Recovery/security configuration audit passes for the inspected build.

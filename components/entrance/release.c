@@ -173,7 +173,7 @@ static esp_err_t fetch_release(release_t *out, const char *version)
     if (err == ESP_OK) {
         release_manifest_t manifest;
         if (!protocol_manifest((char *)body, len, &manifest) ||
-            (*version && strcmp(version, manifest.version)))
+            !protocol_release_version_allowed(manifest.version, version))
             err = ESP_ERR_INVALID_ARG;
         else {
             strlcpy(out->version, manifest.version, sizeof(out->version));
@@ -290,7 +290,7 @@ esp_err_t release_check(const char *version)
     if (version) {
         bool valid = false;
         version_compare(version, version, &valid);
-        if (!valid || strchr(version, '-'))
+        if (!valid)
             return ESP_ERR_INVALID_VERSION;
     }
     if (!release_mutex || !net_online() || ota_busy())

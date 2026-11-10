@@ -30,11 +30,12 @@ try {
     page.on('pageerror', error => errors.push(error.message));
     page.on('request', request => requests.push(request.url()));
     let mode = 'idle', checks = 0, confirmed = false, chunkCount = 0, failed = false;
+    let networkOnline = false, releaseReady = false, remoteInstalls = 0, expectedVersion = '0.2.0';
     const status = () => ({device_id:'entrance-c5d474', board:'esp32c3-supermini-4m', version:'0.1.0',
       idf:'v6.1', slot:'ota_0', uptime_ms:90000, free_heap:110000, minimum_heap:81000, largest_block:72000,
       reset_reason:1, settings_healthy:true, rollback_available:true,
       slots:[{slot:'ota_0',version:'0.1.0',state:'valid',running:true},{slot:'ota_1',version:'0.0.9',state:'valid',running:false}],
-      network:{ap_ssid:'203-C5D474',station_ip:'offline',station_ssid:'',online:false,maintenance:false},
+      network:{ap_ssid:'203-C5D474',station_ip:'offline',station_ssid:'',online:networkOnline,maintenance:false},
       ota:{phase:mode,busy:false,trial:false,healthy:true}});
     await page.route(`${origin}/api/v1/**`, async route => {
       const request = route.request(), url = new URL(request.url()), p = url.pathname.replace('/api/v1','');
@@ -44,7 +45,8 @@ try {
         if (request.postDataJSON().password === 'incorrect-password') {code=401;body={error:'authentication',message:'Administrator password was not accepted.'};}
         else body={token:'a'.repeat(64),csrf:'b'.repeat(32)};
       } else if (p === '/status') body=status();
-      else if (p === '/releases') body={verified:false,message:'Offline: connect an optional Wi-Fi uplink to check GitHub'};
+      else if (p === '/releases') body=releaseReady?{verified:true,newer:true,version:'0.3.0',message:'Verified release'}:{verified:false,message:'Offline: connect an optional Wi-Fi uplink to check GitHub'};
+      else if (p === '/releases/install') {remoteInstalls++;checks=0;confirmed=false;mode='trial';expectedVersion='0.3.0';body={ticket:'d'.repeat(64)};}
       else if (p === '/logs') body=Array.from({length:64},(_,i)=>({id:i+1,ms:i*1000,message:i===63?'Literal <script>never execute</script>':'Management service healthy'}));
       else if (p === '/ota/start') {mode='receiving';body={ticket:'c'.repeat(64),chunk_size:8192};}
       else if (p === '/ota/chunk') {chunkCount++; if(failed){code=409;body={error:'signature',message:'Image signature was rejected.'};}}
@@ -52,7 +54,7 @@ try {
       else if (p === '/ota/status') {
         checks++;
         if(checks===1) {await route.abort('connectionreset');return;}
-        body={phase: confirmed?'confirmed':mode,trial:!confirmed,running_version:'0.2.0',detail:'Trial health check'};
+        body={phase: confirmed?'confirmed':mode,trial:!confirmed,running_version:expectedVersion,detail:'Trial health check'};
       } else if (p === '/ota/confirm') {confirmed=true;body={ok:true};}
       else if (p === '/diagnostics') body=status();
       else body={ok:true};
@@ -90,6 +92,14 @@ try {
       await page.locator('#notice').filter({hasText:'Image signature was rejected.'}).waitFor();
       assert.equal(await page.locator('#progress-stage').textContent(),'Not confirmed');
       await page.reload();assert.equal(await page.locator('html').getAttribute('data-theme'),'light');
+      networkOnline=true;releaseReady=true;failed=false;mode='idle';
+      await page.locator('#password').fill('correct-password');await page.locator('#login-form button').click();
+      await page.locator('#install-release:not([disabled])').waitFor();await page.locator('#install-release').click();
+      await page.waitForFunction(()=>JSON.parse(sessionStorage.getItem('203-update')||'{}').expected==='0.3.0');
+      await page.reload();
+      await page.locator('#notice').filter({hasText:'Installed 0.3.0'}).waitFor({timeout:20000});
+      assert.equal(remoteInstalls,1);assert.equal(confirmed,true);
+      assert.equal(await page.evaluate(()=>sessionStorage.getItem('203-update')),null);
     }
     assert.deepEqual(errors,[]);
     assert.ok(requests.every(url=>url.startsWith(origin)), 'unexpected external asset dependency');

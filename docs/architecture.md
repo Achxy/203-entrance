@@ -57,3 +57,7 @@ HTTPS uses a unique device certificate and private key provisioned over USB. The
 Release downloads validate HTTPS certificates, hostname and certificate time against the full bundled trust store. The board waits for an uplink and a plausible SNTP clock. Redirects are bounded and restricted to the project release path and GitHub asset hosts; there is no arbitrary URL fetch API. A signed manifest authenticates the image digest, size, version, board, layout and settings schema. No GitHub token is provisioned on the board. A compromised time source can cause availability problems; image authenticity still depends on the project signing key.
 
 Reference: [ESP-IDF OTA](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32c3/api-reference/system/ota.html) and [software signed-app verification](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32c3/security/secure-boot-v2.html#signed-app-verification-without-hardware-secure-boot).
+
+## Scheduling under cryptographic load
+
+The HTTPS server and release worker run at the idle task priority with ESP-IDF time slicing enabled. This gives IDLE a CPU share even inside a long PSA password derivation or TLS operation. The independent health task and radio tasks retain higher priority. Both the idle watchdog and the 15-second health watchdog remain enabled. Authentication clients allow 45 seconds for a bounded login; ordinary requests keep shorter deadlines.

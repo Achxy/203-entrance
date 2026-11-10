@@ -28,6 +28,8 @@ class ProtocolTests(unittest.TestCase):
         cls.lib = ctypes.CDLL(str(output))
         cls.lib.protocol_manifest.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.POINTER(Manifest)]
         cls.lib.protocol_manifest.restype = ctypes.c_bool
+        cls.lib.protocol_release_version_allowed.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+        cls.lib.protocol_release_version_allowed.restype = ctypes.c_bool
         cls.lib.protocol_object.argtypes = [ctypes.c_char_p, ctypes.c_size_t]
         cls.lib.protocol_object.restype = ctypes.c_void_p
         cls.lib.cJSON_Delete.argtypes = [ctypes.c_void_p]
@@ -64,7 +66,7 @@ class ProtocolTests(unittest.TestCase):
     def test_incompatible_and_noncanonical_manifest(self):
         for key, values in dict(format=[2, True], layout=[0, 2], schema=[0, 2],
                                 size=[4096, 8193, 0x1E0001, -1, 1.5],
-                                version=['1.2.3-rc.1', '1.2', '01.2.3', '1.2.3-'],
+                                version=['1.2', '01.2.3', '1.2.3-'],
                                 board=['esp32', None], sha256=['00', None]).items():
             for value in values:
                 with self.subTest(key=key, value=value):
@@ -72,6 +74,20 @@ class ProtocolTests(unittest.TestCase):
                     self.assertFalse(self.check(json.dumps(payload).encode())[0])
         payload = self.value(); payload['extra'] = 1
         self.assertFalse(self.check(json.dumps(payload).encode())[0])
+
+    def test_stable_checks_and_explicit_candidate_selection(self):
+        payload = self.value(); payload['version'] = '1.2.3-rc.1'
+        self.assertTrue(self.check(json.dumps(payload).encode())[0])
+        for version, requested, allowed in [
+            (b'1.2.3', None, True), (b'1.2.3-rc.1', None, False),
+            (b'1.2.3-rc.1', b'', False), (b'1.2.3+build-info', None, True),
+            (b'1.2.3-rc.1', b'1.2.3-rc.1', True),
+            (b'1.2.3-rc.1', b'1.2.3-rc.2', False),
+            (b'1.2.3', b'1.2.4', False), (b'../../outside', None, False),
+            (None, None, False),
+        ]:
+            with self.subTest(version=version, requested=requested):
+                self.assertEqual(self.lib.protocol_release_version_allowed(version, requested), allowed)
 
     def test_all_truncation_points(self):
         raw = json.dumps(self.value()).encode()
