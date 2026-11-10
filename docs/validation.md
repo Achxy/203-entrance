@@ -36,19 +36,25 @@ Status: **qualification in progress; stable acceptance has not been claimed**.
 - With time-sliced workers, two consecutive post-OTA startup browser runs completed on rc.71 and rc.72 without an unexpected reset. The board then downloaded and verified the actual GitHub manifest, signature and rc.74 image over HTTPS. Browser refresh during that installation resumed the same transaction, and rc.74 confirmed healthy. The public rc.74 release remains a qualification prerelease.
 - A later local-upload request exceeded its 20-second reply budget while rc.74 remained healthy. Clients now resolve the ticket's accepted offset before any retry. This correction and the requirement for recent updater contact at the health boundary are covered by host tests; the final hardware qualification uses rebuilt images containing them.
 
-## Acceptance gates still open
+## Current qualification results
 
-| Gate | Evidence required |
+The latest firmware implementation is source commit `d0dd930fc647f30a433515dae19160cac20ddb75`. Signed qualification image `0.1.0-rc.99` is published as a **prerelease**, not a stable release. The fault images use explicit build flags and are not published as production firmware.
+
+- Linux CI passed both the firmware and console jobs for this source revision: [run 42909109762](https://github.com/Achxy/203-entrance/actions/runs/42909109762).
+- All **28 real-board rejection checks** passed on rebuilt rc.75, including a full-length incorrect administrator password, CSRF/origin failures, concurrent starts, interrupted-transfer timeout, size/offset rules, compatibility, downgrade, damaged digest, unsigned image, wrong RSA key, unavailable rollback and throttling. Specific rejection reasons were checked; transport failures were not counted as signature rejections. The running image and settings generation were unchanged.
+- Hotspot-only management with an unavailable configured uplink passed again on rc.75. The optional uplink was restored afterward.
+- An actual browser upload from rc.75 to rc.76 deliberately lost one successful chunk acknowledgement. The browser queried the accepted offset, recovered, and confirmed the expected image. Actual HTTPS console checks passed at 1440, 390 and 320 pixels after reboot, with no external assets or page errors. This is desktop Chromium at mobile viewport sizes; physical-phone certificate enrollment remains unverified.
+- **Physical power interruption during an unconfirmed trial passed.** The user unplugged/reconnected USB while rc.77 was pending. Continuous serial and USB-presence evidence established that removal preceded the 120-second deadline; rc.76 returned with a power-on reset, healthy services and retained credentials/settings. macOS assigned a different USB port after reconnect; the same hardware serial was verified. An initial 20-second polling window ended before removal, so the result was established from the continuous recordings and subsequent authenticated recovery, rather than treating that expired polling attempt as a pass.
+- The earlier transfer-cut cue expired without any removal and is not a power-loss result. Actual transfer-stage and activation-stage cuts remain open.
+
+## Remaining acceptance gates
+
+| Gate | Evidence still required |
 |---|---|
-| Hotspot management | Successful association, certificate-pinned HTTPS login/status and browser interaction |
-| Real OTA | Signed local upload, candidate verification, reboot and healthy confirmation |
-| Authentication/CSRF/concurrency on board | Expected rejections with the current image/settings retained |
-| Credentials/settings | Preserved across update and explicit/automatic rollback |
-| Native image rejection | Wrong signer, unsigned, corruption, truncation, oversized and incompatible images |
-| Startup/reset faults | Failed startup, missed confirmation, watchdog and reset during trial |
-| Remote release | Actual HTTPS GitHub manifest/image download through a temporary 2.4 GHz Internet uplink |
-| Actual power interruption | Physical unplug or switched power during transfer, activation and trial; separate from software reset |
-| Stability | 20 alternating OTA cycles and 60 minutes with no unexplained resets, progressive heap loss, corrupted settings or loss of management |
-| Final delivery | Qualified firmware installed, recovery bundle verified, source/release published and final hardware security state checked |
+| Trial/reset faults | Separate missing and stale confirmation, failed startup, deliberate health watchdog, reset during trial and explicit rollback checks |
+| Remote release on final implementation | Actual download/confirmation of the rebuilt candidate; the earlier rc.74 GitHub flow passed before the latest acknowledgement/contact changes |
+| Actual power interruption | Transfer-stage and post-verification/pre-first-boot activation cuts, separately recorded |
+| Stability | 20 alternating OTA cycles and a 60-minute soak without unexplained resets, progressive heap loss, corrupted settings or management loss |
+| Final delivery | Qualified firmware installed, recovery bundle verified, stable release published and final hardware security state checked |
 
-Until these gates are measured, the implementation must not be described as fully stable or completely hardware validated.
+Until these remaining gates are measured, the implementation must not be described as fully stable or completely hardware validated.
