@@ -1,0 +1,9 @@
+{
+  "name": "203-entrance-console-tests",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Development-only browser tests; no npm assets are shipped to the board",
+  "scripts": {"test": "node tests/browser.mjs"},
+  "devDependencies": {"playwright": "1.59.1"},
+  "engines": {"node": ">=22 <25"}
+}

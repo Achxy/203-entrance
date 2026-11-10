@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+for runtime in "$project_dir"/.tools/idf-tools/python_env/idf6.1_py3.12_env/bin/python /opt/homebrew/opt/python@3.12/bin/python3.12; do
+    if [ -x "$runtime" ]; then exec "$runtime" "$project_dir/tools/entrance.py" "$@"; fi
+done
+exec python3 "$project_dir/tools/entrance.py" "$@"

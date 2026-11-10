@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>203 / Device console</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to console</a>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="203 device console"><strong>203<span> / </span></strong><span>DEVICE CONSOLE</span></a>
+    <div class="top-actions"><span id="connection" class="connection">Not connected</span><button id="theme" class="quiet" aria-label="Switch color theme">Light theme</button><button id="logout" class="quiet" hidden>Sign out</button></div>
+  </header>
+  <main id="main">
+    <section id="login-panel" class="login-section">
+      <p class="eyebrow">LOCAL MANAGEMENT / ESP32-C3</p>
+      <h1>A direct line<br>to your device.</h1>
+      <p class="lede">Firmware, networking, and recovery. Available here, even when the Internet isn’t.</p>
+      <form id="login-form" class="login-form">
+        <label for="password">Administrator password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required minlength="12" maxlength="128">
+        <button type="submit" class="primary">Open console <span aria-hidden="true">↗</span></button>
+        <p class="muted">Use the credentials generated during USB provisioning.</p>
+      </form>
+    </section>
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+    <div id="console" hidden>
+      <section class="overview">
+        <div><p class="eyebrow">CONNECTED DEVICE</p><h1 id="device-name">203 entrance</h1><p class="subline"><span id="board">ESP32-C3</span><span class="divider">/</span><span id="uptime">—</span></p></div>
+        <div class="health"><span class="status-dot"></span><strong id="health-label">Reading state</strong><span id="reset-reason" class="muted"></span></div>
+      </section>
+      <nav class="section-nav" aria-label="Console sections"><a href="#firmware">Firmware</a><a href="#network">Network</a><a href="#diagnostics">Diagnostics</a></nav>
+      <section id="firmware" class="section">
+        <div class="section-heading"><h2><span>01</span> Firmware</h2><span id="ota-phase" class="badge">idle</span></div>
+        <div class="firmware-grid">
+          <div>
+            <dl class="properties"><div><dt>Running version</dt><dd id="version">—</dd></div><div><dt>Active slot</dt><dd id="slot">—</dd></div><div><dt>ESP-IDF</dt><dd id="idf">—</dd></div><div><dt>Previous image</dt><dd id="rollback-state">—</dd></div></dl>
+            <div class="recovery"><button id="rollback" class="secondary" disabled>Roll back firmware</button><p class="muted">Restores the previous confirmed image. Network credentials are retained.</p></div>
+          </div>
+          <div class="update-area">
+            <h3>Install a signed image</h3><p class="muted">Upload the application <code>.bin</code> produced by this project. Keep this page open until the new version confirms healthy.</p>
+            <label class="file-label" for="image"><span id="file-label">Choose firmware .bin</span><span aria-hidden="true">↑</span></label><input id="image" type="file" accept=".bin,application/octet-stream">
+            <div class="action-row"><button id="upload" class="primary" disabled>Verify and install</button><button id="cancel" class="quiet" hidden>Cancel transfer</button></div>
+            <div id="progress-panel" hidden><div class="progress-label"><strong id="progress-stage">Preparing</strong><span id="progress-bytes"></span></div><progress id="progress" max="100" value="0" aria-label="Firmware transfer progress"></progress><p id="progress-detail" class="muted" aria-live="polite"></p></div>
+          </div>
+        </div>
+        <div class="release-strip"><div><h3>GitHub releases <span class="small-label">OPTIONAL UPLINK</span></h3><p id="release-status" class="muted">Connect an uplink to check for signed releases.</p></div><div class="action-row"><button id="check-release" class="secondary">Check releases</button><button id="install-release" class="secondary" disabled>Install release</button></div></div>
+      </section>
+      <section id="network" class="section">
+        <div class="section-heading"><h2><span>02</span> Network</h2><span id="network-badge" class="badge">Hotspot</span></div>
+        <div class="network-grid"><div><h3>Device hotspot</h3><dl class="properties"><div><dt>Network name</dt><dd id="ap-ssid">—</dd></div><div><dt>Console address</dt><dd>192.168.4.1</dd></div><div><dt>Uplink address</dt><dd id="station-ip">Offline</dd></div></dl><p class="muted">The hotspot stays available when the uplink is unavailable. Changing uplink channels can briefly reconnect your Wi-Fi.</p></div>
+          <form id="network-form"><h3>Optional Internet connection</h3><label for="ssid">2.4 GHz Wi-Fi name</label><input id="ssid" name="ssid" autocomplete="off" maxlength="32"><label for="wifi-password">Wi-Fi password</label><input id="wifi-password" type="password" autocomplete="new-password" maxlength="63"><div class="action-row"><button class="secondary" type="submit">Save and connect</button><button id="disconnect" class="quiet" type="button">Disable uplink</button></div></form>
+        </div>
+      </section>
+      <section id="diagnostics" class="section">
+        <div class="section-heading"><h2><span>03</span> Diagnostics</h2><button id="export" class="quiet">Export report ↓</button></div>
+        <div class="memory-row"><div><span>Free heap</span><strong id="heap">—</strong></div><div><span>Lowest free heap</span><strong id="minimum-heap">—</strong></div><div><span>Largest free block</span><strong id="largest-block">—</strong></div></div>
+        <div class="log-heading"><h3>Event log</h3><button id="pause-log" class="quiet" aria-pressed="false">Pause</button></div><pre id="logs" class="logs" tabindex="0" aria-label="Bounded device event log">Waiting for events…</pre>
+        <p class="muted recovery-note">Recovery: hold BOOT for 5 seconds while running to disable the uplink. For USB recovery, hold BOOT while pressing RESET, then use the project’s recovery instructions.</p>
+      </section>
+      <footer><span>203 / Entrance foundation</span><span>Signed images · Two firmware slots · Local control</span></footer>
+    </div>
+  </main>
+</body>
+</html>

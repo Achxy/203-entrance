@@ -1,0 +1,9 @@
+menu "203 Entrance"
+    config ENTRANCE_WIFI_TX_POWER
+        int "Maximum Wi-Fi transmit power (quarter dBm)"
+        range 8 80
+        default 34
+        help
+            34 requests 8.5 dBm. Qualify radio power on the actual Super Mini;
+            maximum power is not a guarantee of reliable board-level RF behavior.
+endmenu

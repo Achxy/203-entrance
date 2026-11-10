@@ -1,0 +1,7 @@
+{
+  "esp_idf_tag": "v6.1",
+  "esp_idf_commit": "fff9895c82d744c7237be8847347bdd1b07c6643",
+  "target": "esp32c3",
+  "flash_bytes": 4194304,
+  "python": "3.12"
+}

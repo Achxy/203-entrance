@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.22)
+set(PROJECT_VER "0.1.0" CACHE STRING "Firmware semantic version")
+set(ENTRANCE_TEST_FAULT "0" CACHE STRING "Qualification only: 0 none, 1 startup, 2 watchdog, 3 reset, 4 activation pause")
+if(NOT ENTRANCE_TEST_FAULT MATCHES "^[0-4]$")
+    message(FATAL_ERROR "Unknown qualification fault")
+endif()
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(203-entrance)
