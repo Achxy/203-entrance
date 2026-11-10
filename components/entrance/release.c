@@ -280,7 +280,9 @@ static void worker(void *unused)
 void release_start(void)
 {
     release_mutex = xSemaphoreCreateMutex();
-    if (!release_mutex || xTaskCreate(worker, "releases", 10240, NULL, 3, NULL) != pdPASS)
+    /* Share CPU with IDLE during TLS crypto; keep watchdog and health service live. */
+    if (!release_mutex ||
+        xTaskCreate(worker, "releases", 10240, NULL, tskIDLE_PRIORITY, NULL) != pdPASS)
         abort();
 }
 esp_err_t release_check(const char *version)

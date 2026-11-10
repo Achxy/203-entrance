@@ -331,12 +331,12 @@ class Device:
         self.token = None
         self.connection = None
 
-    def request(self, method, path, body=None, *, ticket=None, headers=None, authenticated=True):
+    def request(self, method, path, body=None, *, ticket=None, headers=None, authenticated=True, timeout=20):
         if self.connection is None or self.connection.sock is None:
             context = ssl.create_default_context(cafile=self.profile["certificate"])
             # Identity is additionally pinned, so DHCP station addresses are also usable.
             context.check_hostname = False
-            connection = http.client.HTTPSConnection(self.host, timeout=20, context=context)
+            connection = http.client.HTTPSConnection(self.host, timeout=timeout, context=context)
             connection.connect()
             fingerprint = hashlib.sha256(connection.sock.getpeercert(binary_form=True)).hexdigest()
             if not secrets.compare_digest(fingerprint, self.profile["certificate_sha256"]):
@@ -344,6 +344,8 @@ class Device:
                 raise ValueError("Device certificate pin changed; verify over USB before enrolling a replacement")
             self.connection = connection
         connection = self.connection
+        connection.timeout = timeout
+        connection.sock.settimeout(timeout)
         request_headers = dict(headers or {})
         if authenticated and self.token:
             request_headers["Authorization"] = "Bearer " + self.token
@@ -366,7 +368,7 @@ class Device:
             raise
 
     def login(self):
-        data = self.request("POST", "/api/v1/session", {"password": self.profile["admin_password"]}, authenticated=False)
+        data = self.request("POST", "/api/v1/session", {"password": self.profile["admin_password"]}, authenticated=False, timeout=45)
         self.token = data["token"]
 
     def wait_confirmed(self, ticket, expected, timeout=160):

@@ -367,6 +367,10 @@ esp_err_t api_start(void)
 {
     httpd_ssl_config_t cfg = HTTPD_SSL_CONFIG_DEFAULT();
     cfg.user_cb = tls_session_boundary;
+    /* ESP-IDF enables time slicing at priority zero. Crypto-heavy management
+       work must share CPU with IDLE, including inside long PSA operations.
+       The independent health task and Wi-Fi driver retain higher priority. */
+    cfg.httpd.task_priority = tskIDLE_PRIORITY;
     cfg.httpd.uri_match_fn = httpd_uri_match_wildcard;
     cfg.httpd.max_uri_handlers = 8;
     cfg.httpd.max_open_sockets = 3;
