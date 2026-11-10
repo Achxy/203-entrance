@@ -25,6 +25,9 @@ async function api(path, { method = "GET", body, ticket, extra = {}, timeout = 2
       error.status = response.status; throw error;
     }
     return value;
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error(`The device did not respond within ${timeout / 1000} seconds. Check its Wi-Fi connection and retry.`);
+    throw error;
   } finally { clearTimeout(timer); }
 }
 function loginView() {
@@ -90,11 +93,12 @@ async function poll() {
   } finally { pollRunning = false; }
 }
 $("login-form").addEventListener("submit", async (event) => {
-  event.preventDefault(); const button = event.submitter; button.disabled = true;
+  event.preventDefault(); const button = event.submitter; const label = button.textContent;
+  button.disabled = true; button.textContent = "Checking credentials…";
   try {
-    const session = await api("/session", { method: "POST", body: { password: $("password").value } });
+    const session = await api("/session", { method: "POST", body: { password: $("password").value }, timeout: 45000 });
     csrf = session.csrf; $("password").value = ""; $("notice").hidden = true; consoleView(); await poll();
-  } catch (error) { notice(error.message, true); } finally { button.disabled = false; }
+  } catch (error) { notice(error.message, true); } finally { button.disabled = false; button.textContent = label; }
 });
 $("logout").addEventListener("click", async () => {
   try { await api("/session", { method: "DELETE" }); } catch (error) { notice(error.message, true); }

@@ -40,6 +40,7 @@ try {
       const request = route.request(), url = new URL(request.url()), p = url.pathname.replace('/api/v1','');
       let body = {}, code = 200;
       if (p === '/session' && request.method() === 'POST') {
+        if (request.postDataJSON().password === 'slow-but-valid-password') await new Promise(resolve=>setTimeout(resolve,25000));
         if (request.postDataJSON().password === 'incorrect-password') {code=401;body={error:'authentication',message:'Administrator password was not accepted.'};}
         else body={token:'a'.repeat(64),csrf:'b'.repeat(32)};
       } else if (p === '/status') body=status();
@@ -63,8 +64,9 @@ try {
     await page.locator('#password').fill('incorrect-password');
     await page.locator('#login-form button').click();
     await page.locator('#notice').filter({hasText:'not accepted'}).waitFor();
-    await page.locator('#password').fill('correct-password');
+    await page.locator('#password').fill(width===1440?'slow-but-valid-password':'correct-password');
     await page.locator('#login-form button').click();
+    if(width===1440) assert.equal(await page.locator('#login-form button').textContent(),'Checking credentials…');
     await page.locator('#console').waitFor({state:'visible'});
     await page.locator('#logs').filter({hasText:'Literal <script>'}).waitFor();
     assert.equal(await page.locator('#logs script').count(),0);
