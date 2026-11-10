@@ -22,13 +22,35 @@ async function api(path, { method = "GET", body, ticket, extra = {}, timeout = 2
     const value = await response.json();
     if (!response.ok) {
       const error = new Error(value.message || `Request failed (${response.status})`);
-      error.status = response.status; throw error;
+      error.status = response.status; error.code = value.error; throw error;
     }
     return value;
   } catch (error) {
     if (error.name === "AbortError") throw new Error(`The device did not respond within ${timeout / 1000} seconds. Check its Wi-Fi connection and retry.`);
     throw error;
   } finally { clearTimeout(timer); }
+}
+async function writeChunk(ticket, offset, data) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await api("/ota/chunk", { method: "PUT", ticket, body: data,
+        extra: { "Content-Type": "application/octet-stream", "X-Upload-Offset": String(offset) } });
+    } catch (error) { if (error.status && error.code !== "ESP_ERR_TIMEOUT") throw error; }
+    let state;
+    for (let check = 0; check < 3; check++) {
+      try { state = await api("/ota/status", { ticket, timeout: 5000 }); break; }
+      catch (error) {
+        if (error.status) throw error;
+        if (check === 2) throw new Error("Cannot resolve upload acknowledgement. Restart the transfer.");
+        await sleep(500);
+      }
+    }
+    if (state.phase !== "receiving") throw new Error(`Transfer is no longer receiving: ${state.detail || "restart required"}`);
+    if (state.received === offset + data.byteLength) return;
+    if (state.received !== offset) throw new Error("Unexpected upload offset. Restart the transfer.");
+    if (attempt < 2) await sleep(500 * (attempt + 1));
+  }
+  throw new Error("Upload chunk failed after three attempts. Restart the transfer.");
 }
 function loginView() {
   signedIn = false; csrf = "";
@@ -154,7 +176,7 @@ $("upload").addEventListener("click", async () => {
     for (let offset = 0; offset < file.size; offset += job.chunk_size) {
       if (cancelled) throw new Error("Transfer cancelled.");
       const end = Math.min(offset + job.chunk_size, file.size);
-      await api("/ota/chunk", { method: "PUT", ticket: job.ticket, body: data.slice(offset,end), extra: { "Content-Type":"application/octet-stream", "X-Upload-Offset":String(offset) } });
+      await writeChunk(job.ticket, offset, data.slice(offset,end));
       progress("Transferring", "Writing the inactive firmware slot. The running image remains available.", end / file.size * 100);
       text("progress-bytes", `${bytes(end)} / ${bytes(file.size)}`);
     }

@@ -30,6 +30,8 @@ Browser mutations require both the session cookie and `X-CSRF-Token`. Supplied O
 
 An installation is successful only when `/ota/status` reports `phase: "confirmed"` and the expected `running_version`. Upload completion, HTTP 200, reboot, and the presence of the hotspot are not confirmation. Phases include idle, receiving, verifying, rebooting, trial, confirmed, failed, rolling_back and rolled_back. Always surface the device's `detail` text when an operation fails.
 
-The inactive slot is not resumable: retry from `/ota/start` after an aborted or timed-out transfer. Do not blindly retry a mutation after a lost response; query status to determine whether it took effect. The supplied CLI implements the confirmation loop.
+After a lost chunk reply, query the ticket's `/ota/status`. While `phase` is `receiving`, `received` equal to the chunk end acknowledges that write; `received` equal to its starting offset permits retry. Reject any other offset or phase. The supplied clients bound write attempts and status recovery to three attempts each. Restart from `/ota/start` after an aborted or timed-out transaction. Never blindly replay an uncertain mutation.
+
+During trial boot, send `/ota/confirm` every two seconds until the expected image reports `confirmed`. The most recent request must be within ten seconds of completion of the continuous 30-second health window; a single early request is insufficient. The 120-second deadline still applies.
 
 An explicit release check may supply `{ "version": "0.1.0-rc.74" }` to verify that version's public assets, including a GitHub qualification release. The authenticated request is still constrained to the configured repository and signed manifest; arbitrary URLs are never accepted. Automatic checks always return to the latest stable release. Images retain the strictly-newer version policy.

@@ -29,7 +29,7 @@ try {
     const errors = [], requests = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('request', request => requests.push(request.url()));
-    let mode = 'idle', checks = 0, confirmed = false, chunkCount = 0, failed = false;
+    let mode = 'idle', checks = 0, confirmed = false, chunkCount = 0, failed = false, received = 0;
     let networkOnline = false, releaseReady = false, remoteInstalls = 0, expectedVersion = '0.2.0';
     const status = () => ({device_id:'entrance-c5d474', board:'esp32c3-supermini-4m', version:'0.1.0',
       idf:'v6.1', slot:'ota_0', uptime_ms:90000, free_heap:110000, minimum_heap:81000, largest_block:72000,
@@ -48,13 +48,17 @@ try {
       else if (p === '/releases') body=releaseReady?{verified:true,newer:true,version:'0.3.0',message:'Verified release'}:{verified:false,message:'Offline: connect an optional Wi-Fi uplink to check GitHub'};
       else if (p === '/releases/install') {remoteInstalls++;checks=0;confirmed=false;mode='trial';expectedVersion='0.3.0';body={ticket:'d'.repeat(64)};}
       else if (p === '/logs') body=Array.from({length:64},(_,i)=>({id:i+1,ms:i*1000,message:i===63?'Literal <script>never execute</script>':'Management service healthy'}));
-      else if (p === '/ota/start') {mode='receiving';body={ticket:'c'.repeat(64),chunk_size:8192};}
-      else if (p === '/ota/chunk') {chunkCount++; if(failed){code=409;body={error:'signature',message:'Image signature was rejected.'};}}
+      else if (p === '/ota/start') {mode='receiving';received=0;body={ticket:'c'.repeat(64),chunk_size:8192};}
+      else if (p === '/ota/chunk') {
+        chunkCount++;
+        if(failed){code=409;body={error:'signature',message:'Image signature was rejected.'};}
+        else {received+=request.postDataBuffer().length;await route.abort('connectionreset');return;}
+      }
       else if (p === '/ota/finish') {mode='trial';body={ok:true};}
       else if (p === '/ota/status') {
         checks++;
         if(checks===1) {await route.abort('connectionreset');return;}
-        body={phase: confirmed?'confirmed':mode,trial:!confirmed,running_version:expectedVersion,detail:'Trial health check'};
+        body={phase: confirmed?'confirmed':mode,trial:mode==='trial'&&!confirmed,received,running_version:expectedVersion,detail:'Trial health check'};
       } else if (p === '/ota/confirm') {confirmed=true;body={ok:true};}
       else if (p === '/diagnostics') body=status();
       else body={ok:true};

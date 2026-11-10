@@ -206,7 +206,7 @@ static void ram_reset(void)
     received = 0;
     active = pending = reboot_scheduled = false;
     acknowledged = header_checked = baseline_healthy = false;
-    last_activity = started = reboot_at = healthy_since = 0;
+    last_activity = started = reboot_at = healthy_since = acknowledged_at = 0;
     expected_version[0] = 0;
     prefix_used = 0;
     strcpy(phase, "idle");
@@ -378,6 +378,9 @@ int main(void)
     assert(confirmations == 0);
     clock_us = 60000001;
     ota_tick(true);
+    assert(confirmations == 0); /* early contact is stale at the health boundary */
+    assert(!ota_confirm(ticket));
+    ota_tick(true);
     assert(confirmations == 1);
     assert(!ota_trial());
     assert(!strcmp(phase, "confirmed"));
@@ -388,6 +391,7 @@ int main(void)
     transfer(ticket);
     assert(!ota_finish());
     trial();
+    assert(!ota_confirm(ticket)); /* healthy but disconnected updater cannot confirm */
     healthy();
     assert(confirmations == 0);
     clock_us = 120000000;

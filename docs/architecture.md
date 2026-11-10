@@ -31,14 +31,14 @@ The bootloader starts at zero and the partition table at `0x8000`. OTA writes ne
 ## Update transaction
 
 1. An authenticated administrator starts an upload or verified release installation. A mutex admits one transfer. Settings changes and explicit rollback conflict with an active transfer or trial.
-2. A random 256-bit ticket is returned only to that updater. The engine keeps its SHA-256 digest. Chunk offsets must exactly match the bytes accepted; each chunk is at most 8192 bytes. No resumption of partially received images is attempted.
+2. A random 256-bit ticket is returned only to that updater. The engine keeps its SHA-256 digest. Chunk offsets must exactly match the bytes accepted; each chunk is at most 8192 bytes. If a reply is lost, clients query that ticket's accepted offset before retrying, with at most three attempts. An expired or aborted transaction must restart from the beginning.
 3. The engine inspects the image/app/custom descriptors, checks ESP32-C3, project, board, partition-layout and settings compatibility, and requires a strictly newer SemVer. For a release download the embedded version must equal the signed manifest version.
 4. Writes go exclusively to the inactive slot. A streaming digest covers the entire signed image. `esp_ota_end` verifies the native ESP-IDF RSA-3072 signature. Only then is the durable ticket/candidate journal committed, followed by boot selection.
 5. The explicitly requested installation reboots after its response. The bootloader marks the candidate pending verification. The application compares its complete image digest with the journal before accepting the ticket.
 6. Confirmation requires both an updater request with the one-time candidate ticket and 30 continuous seconds of healthy local management, valid settings and available heap. Confirmation must occur before 120 seconds from boot. A reset during an unconfirmed trial causes bootloader rollback; a missed deadline requests rollback explicitly.
 7. ESP-IDF boot metadata is authoritative across a reset between marking the image valid and saving the confirmed outcome. The old image reports a rolled-back transaction using the same scoped ticket, allowing the initiating client to report failure accurately.
 
-The ticket cannot log in, change settings, or start another update. Confirmation is idempotent for its transaction. Sessions are lost at reboot; the ticket supports reconnection without storing the administrator password in the browser. A new transaction replaces the ticket.
+The ticket cannot log in, change settings, or start another update. Confirmation is idempotent for its transaction. The updater must keep reconnecting: the last confirmation request must be at most ten seconds old when the continuous 30-second health window completes. An early acknowledgement alone cannot confirm a trial that subsequently becomes unreachable. Sessions are lost at reboot; the ticket supports reconnection without storing the administrator password in the browser. A new transaction replaces the ticket.
 
 A transfer aborts after 30 seconds without data or 300 seconds total. Remote connection attempts are bounded; interrupted transfers must restart. Boot selection is untouched on parsing, write, digest, signature, or journal failure. A full signature check can take appreciable time on the C3.
 

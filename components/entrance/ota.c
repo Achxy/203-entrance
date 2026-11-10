@@ -14,7 +14,7 @@ static update_record_t record;
 static size_t received;
 static atomic_bool active, pending, reboot_scheduled;
 static bool acknowledged, header_checked, baseline_healthy;
-static int64_t last_activity, started, reboot_at, healthy_since;
+static int64_t last_activity, started, reboot_at, healthy_since, acknowledged_at;
 static char expected_version[32];
 static char phase[24] = "idle", detail[96] = "Ready";
 static uint8_t prefix[sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t) +
@@ -132,6 +132,7 @@ esp_err_t ota_begin(size_t size, const uint8_t hash[32], const char *version, ch
             received = prefix_used = 0;
             header_checked = false;
             acknowledged = false;
+            acknowledged_at = 0;
             strlcpy(expected_version, version ? version : "", sizeof(expected_version));
             digest = (psa_hash_operation_t)PSA_HASH_OPERATION_INIT;
             if (psa_hash_setup(&digest, PSA_ALG_SHA_256) != PSA_SUCCESS)
@@ -280,6 +281,7 @@ esp_err_t ota_confirm(const char *ticket)
     if (ticket_matches(ticket) && pending &&
         esp_timer_get_time() < ENTRANCE_TRIAL_SECONDS * 1000000LL) {
         acknowledged = true;
+        acknowledged_at = esp_timer_get_time();
         err = ESP_OK;
     } else if (ticket_matches(ticket) && !pending && !strcmp(record.result, "confirmed"))
         err = ESP_OK;
@@ -315,7 +317,8 @@ void ota_tick(bool healthy)
     }
     if (active && (now - last_activity > 30000000 || now - started > 300000000))
         abort_locked("Transfer timed out; retry the update from the beginning");
-    if (pending && stable && acknowledged && now < ENTRANCE_TRIAL_SECONDS * 1000000LL) {
+    if (pending && stable && acknowledged && now - acknowledged_at <= 10000000 &&
+        now < ENTRANCE_TRIAL_SECONDS * 1000000LL) {
         esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
         if (err == ESP_OK) {
             pending = false;
@@ -379,7 +382,9 @@ cJSON *ota_status(void)
     cJSON_AddNumberToObject(j, "total", record.image_size);
     cJSON_AddBoolToObject(j, "busy", ota_busy());
     cJSON_AddBoolToObject(j, "trial", pending);
-    cJSON_AddBoolToObject(j, "reconnected", acknowledged);
+    cJSON_AddBoolToObject(j, "reconnected",
+                          acknowledged &&
+                              (!pending || esp_timer_get_time() - acknowledged_at <= 10000000));
     cJSON_AddBoolToObject(j, "healthy", baseline_healthy);
     cJSON_AddNumberToObject(j, "uptime_ms", esp_timer_get_time() / 1000);
     xSemaphoreGive(operation_mutex);

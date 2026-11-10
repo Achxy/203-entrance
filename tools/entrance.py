@@ -324,12 +324,20 @@ def cmd_flash(args):
     print("Credentials:", PROFILE)
 
 
+class APIError(RuntimeError):
+    def __init__(self, status, value):
+        self.status = status
+        self.code = value.get("error")
+        super().__init__(f"HTTP {status}: {value.get('message', value)}")
+
+
 class Device:
     def __init__(self, host=None):
         self.profile = json.loads(PROFILE.read_text())
         self.host = host or self.profile["host"]
         self.token = None
         self.connection = None
+        self.recovered_chunks = 0
 
     def request(self, method, path, body=None, *, ticket=None, headers=None, authenticated=True, timeout=20):
         if self.connection is None or self.connection.sock is None:
@@ -360,7 +368,7 @@ class Device:
             data = response.read(256 * 1024)
             result = json.loads(data) if data else {}
             if response.status >= 400:
-                raise RuntimeError(f"HTTP {response.status}: {result.get('message', result)}")
+                raise APIError(response.status, result)
             return result
         except BaseException:
             connection.close()
@@ -370,6 +378,44 @@ class Device:
     def login(self):
         data = self.request("POST", "/api/v1/session", {"password": self.profile["admin_password"]}, authenticated=False, timeout=45)
         self.token = data["token"]
+
+    def write_chunk(self, ticket, offset, data):
+        """Resolve a lost acknowledgement before retrying a bounded chunk."""
+        for attempt in range(3):
+            try:
+                result = self.request("PUT", "/api/v1/ota/chunk", data, ticket=ticket,
+                                      headers={"Content-Type": "application/octet-stream",
+                                               "X-Upload-Offset": str(offset)})
+                if attempt:
+                    self.recovered_chunks += 1
+                return result
+            except APIError as error:
+                if error.code != "ESP_ERR_TIMEOUT":
+                    raise
+            except (OSError, http.client.HTTPException):
+                pass
+            # Do not resend while the outcome is unknown. A ticket scopes this
+            # read to the same transaction, including after a reconnect.
+            for check in range(3):
+                try:
+                    state = self.request("GET", "/api/v1/ota/status", ticket=ticket,
+                                         authenticated=False, timeout=5)
+                    break
+                except (OSError, http.client.HTTPException):
+                    if check == 2:
+                        raise TimeoutError("Cannot resolve upload acknowledgement; restart the transfer")
+                    time.sleep(0.5)
+            if state.get("phase") != "receiving":
+                raise ValueError("Transfer is no longer receiving: " + state.get("detail", "restart required"))
+            accepted = state.get("received")
+            if accepted == offset + len(data):
+                self.recovered_chunks += 1
+                return {"ok": True}
+            if accepted != offset:
+                raise ValueError("Unexpected upload offset; refusing to replay data")
+            if attempt < 2:
+                time.sleep(0.5 * (attempt + 1))
+        raise TimeoutError("Upload chunk failed after three attempts; restart the transfer")
 
     def wait_confirmed(self, ticket, expected, timeout=160):
         deadline = time.monotonic() + timeout
@@ -412,8 +458,7 @@ def cmd_upload(args):
         with binary.open("rb") as stream:
             offset = 0
             while chunk := stream.read(start["chunk_size"]):
-                device.request("PUT", "/api/v1/ota/chunk", chunk, ticket=ticket,
-                               headers={"Content-Type": "application/octet-stream", "X-Upload-Offset": str(offset)})
+                device.write_chunk(ticket, offset, chunk)
                 offset += len(chunk)
                 if offset % (128 * 1024) == 0 or offset == metadata["size"]:
                     print(f"Transferred {offset}/{metadata['size']} bytes", flush=True)
