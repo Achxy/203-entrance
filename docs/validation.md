@@ -45,7 +45,9 @@ The latest firmware implementation is source commit `d0dd930fc647f30a433515dae19
 - Hotspot-only management with an unavailable configured uplink passed again on rc.75. The optional uplink was restored afterward.
 - An actual browser upload from rc.75 to rc.76 deliberately lost one successful chunk acknowledgement. The browser queried the accepted offset, recovered, and confirmed the expected image. Actual HTTPS console checks passed at 1440, 390 and 320 pixels after reboot, with no external assets or page errors. This is desktop Chromium at mobile viewport sizes; physical-phone certificate enrollment remains unverified.
 - **Physical power interruption during an unconfirmed trial passed.** The user unplugged/reconnected USB while rc.77 was pending. Continuous serial and USB-presence evidence established that removal preceded the 120-second deadline; rc.76 returned with a power-on reset, healthy services and retained credentials/settings. macOS assigned a different USB port after reconnect; the same hardware serial was verified. An initial 20-second polling window ended before removal, so the result was established from the continuous recordings and subsequent authenticated recovery, rather than treating that expired polling attempt as a pass.
-- The earlier transfer-cut cue expired without any removal and is not a power-loss result. Actual transfer-stage and activation-stage cuts remain open.
+- **Physical power interruption during transfer passed.** USB removal occurred while writing the inactive slot. The running rc.76 returned with a power-on reset, unchanged slot and preserved settings/credentials.
+- **Physical interruption after verification and boot selection passed.** A qualification-only activation pause held rc.78.1 before reboot; the user cut power about 60.7 seconds after the stage was armed. The selected rc.79 booted, reconnected and confirmed healthy with retained settings/credentials. This establishes post-selection/pre-first-boot recovery, not interruption of a particular metadata write instruction.
+- Expired cue attempts are excluded. One earlier activation cue resulted in removal during the subsequent trial, so it was not counted as an activation-stage pass. The fault-only pause was extended from one minute to five minutes in `f2977b6`; ordinary production code retains its two-second delay. Normal qualification images built from `d0dd930` are unaffected by this preprocessor-only test-fixture change.
 
 ## Remaining acceptance gates
 
@@ -53,7 +55,6 @@ The latest firmware implementation is source commit `d0dd930fc647f30a433515dae19
 |---|---|
 | Trial/reset faults | Separate missing and stale confirmation, failed startup, deliberate health watchdog, reset during trial and explicit rollback checks |
 | Remote release on final implementation | Actual download/confirmation of the rebuilt candidate; the earlier rc.74 GitHub flow passed before the latest acknowledgement/contact changes |
-| Actual power interruption | Transfer-stage and post-verification/pre-first-boot activation cuts, separately recorded |
 | Stability | 20 alternating OTA cycles and a 60-minute soak without unexplained resets, progressive heap loss, corrupted settings or management loss |
 | Final delivery | Qualified firmware installed, recovery bundle verified, stable release published and final hardware security state checked |
 
