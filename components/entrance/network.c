@@ -107,6 +107,8 @@ esp_err_t net_init(void)
     if ((err = esp_timer_create(&timer, &reconnect_timer)) != ESP_OK)
         return err;
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    /* Settings failures must not prevent the identity-backed maintenance AP. */
+    cfg.nvs_enable = 0;
     if ((err = esp_wifi_init(&cfg)) != ESP_OK)
         return err;
     if ((err = esp_wifi_set_storage(WIFI_STORAGE_RAM)) != ESP_OK)

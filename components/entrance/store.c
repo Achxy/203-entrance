@@ -95,7 +95,12 @@ esp_err_t store_init(void)
         return ESP_ERR_INVALID_STATE;
 
     settings.schema = ENTRANCE_SCHEMA;
+#if ENTRANCE_TEST_FAULT == 5
+    /* Qualification: leave the real settings partition intact but unavailable. */
+    err = ESP_ERR_NVS_NOT_INITIALIZED;
+#else
     err = nvs_flash_init();
+#endif
     if (err == ESP_OK)
         err = nvs_open("cfg_v1", NVS_READWRITE, &config_handle);
     if (err != ESP_OK) {

@@ -143,7 +143,7 @@ def cmd_build(args):
     if actual != IDF_COMMIT:
         raise ValueError("SDK revision does not match toolchain.json")
     inputs = source_fingerprint()
-    fault = {"none": 0, "startup": 1, "watchdog": 2, "reset": 3, "activation": 4}[args.fault]
+    fault = {"none": 0, "startup": 1, "watchdog": 2, "reset": 3, "activation": 4, "storage": 5}[args.fault]
     idf("-D", "IDF_TARGET=esp32c3", "-D", f"PROJECT_VER={version}",
         "-D", f"ENTRANCE_TEST_FAULT={fault}", "build")
     binary = ROOT / "build/203-entrance.bin"
@@ -705,7 +705,7 @@ def main():
             p.add_argument("--host")
         if name == "build":
             p.add_argument("--version", default="0.1.0")
-            p.add_argument("--fault", choices=["none", "startup", "watchdog", "reset", "activation"], default="none",
+            p.add_argument("--fault", choices=["none", "startup", "watchdog", "reset", "activation", "storage"], default="none",
                            help="Qualification-only fault during trial; release tooling refuses these builds")
         if name == "provision": p.add_argument("--reset-access", action="store_true", help="Generate replacement device access credentials and certificate")
         if name in {"upload", "sign", "release"}: p.add_argument("image")

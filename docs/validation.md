@@ -2,6 +2,8 @@
 
 Status: **qualification in progress; stable acceptance has not been claimed**.
 
+The `0.1.0` prerelease was superseded during qualification. An additional storage-failure test found that the Wi-Fi driver's NVS dependency prevented maintenance startup when the settings partition was unavailable. The corrected initialization explicitly disables driver-owned NVS. Actual certificate-pinned HTTPS maintenance login/status now succeeds with the settings NVS deliberately unavailable, without erasing saved settings. Fresh normal-operation stability qualification follows this correction; eight earlier successful alternating cycles are retained as historical evidence and will not be counted toward the corrected firmware's 20-cycle gate.
+
 ## Hardware and preservation
 
 - Attached Espressif ESP32-C3 QFN32 revision 0.4, 4 MB embedded XMC flash, 40 MHz crystal, USB Serial/JTAG.

@@ -46,6 +46,8 @@ A transfer aborts after 30 seconds without data or 300 seconds total. Remote con
 
 Identity lives separately from settings and updates. `cfg_v1` contains two CRC-protected snapshots with increasing generations; a write targets the older snapshot and commits before changing RAM state. A torn replacement retains the previous valid snapshot. Unknown/corrupt storage is never automatically erased. Future incompatible settings schemas must use a new namespace, copy forward transactionally and retain `cfg_v1` until older firmware is no longer a recovery target. Version 1 deliberately supports only schema 1.
 
+The Wi-Fi driver starts with its own NVS access disabled; application-owned configuration is applied from RAM. This is essential for maintenance: a failed settings partition must not prevent the separate identity partition from supplying the hotspot credentials and HTTPS identity. PHY calibration can fall back to full calibration when its cached data is unavailable. The `storage` qualification fault reproduces an unavailable default NVS partition without erasing its saved contents.
+
 The hotspot starts independently of station success. Hold BOOT for five seconds while running to cancel a transfer and disable the uplink until reboot. This does not erase credentials or bypass login. A corrupt identity requires USB reprovisioning. If no valid previous image exists, rollback is refused and USB recovery remains available.
 
 ## Security boundary

@@ -77,7 +77,7 @@ The certificate is retained across OTA and rollback. A changed fingerprint requi
 | `soak --minutes 60` | Management API stability samples |
 | `soak --serial --minutes 60 --port PORT` | USB health samples while keeping the host online |
 
-Run `./entrance COMMAND --help` for options. `build --fault startup|watchdog|reset|activation` creates an explicit trial-failure qualification image; publication rejects these builds. `upload --no-confirm` exercises the missed-confirmation rollback path.
+Run `./entrance COMMAND --help` for options. `build --fault startup|watchdog|reset|activation|storage` creates an explicit qualification image; publication rejects these builds. The `storage` test leaves saved settings intact but makes their NVS partition unavailable to that image, exercising HTTPS maintenance and trial rollback. `upload --no-confirm` exercises the missed-confirmation rollback path.
 
 ## Development and documentation
 
