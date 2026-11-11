@@ -916,7 +916,7 @@ def main():
         if name == "display":
             p.add_argument("--mode", choices=["play", "pause", "blank", "test", "replay", "replay_pause"])
             p.add_argument("--profile", choices=["red", "green", "black"])
-            p.add_argument("--replay-chapter", type=int, choices=[0], help="Restart the built-in loop without resetting captions")
+            p.add_argument("--replay-chapter", type=int, choices=[0], help="Restart the built-in loop; the room-number header stays fixed")
             p.add_argument("--rotation", type=int, choices=range(4))
             p.add_argument("--inverted", action=argparse.BooleanOptionalAction, default=None)
         if name == "arcade":

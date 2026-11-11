@@ -7,11 +7,12 @@ RGB565 palette. The complete ECL1 asset is **10,582 bytes**, including its heade
 palette and checksum. It is embedded in the signed application; custom media
 retains its separate 12 KiB allowance.
 
-The landscape display retains a 40-row caption area, 10-pixel lettering and a
-one-row yellow divider. The three existing messages change every two seconds,
-independently of animation pause, restart and loop position. The requested
-“Knock the mario theme to unlock the door” caption remains unchanged; replacing
-the artwork does not implement or change any unlocking behavior.
+The landscape display retains the exact 40-row header area and one-row yellow
+divider at row 40. A fixed **203** replaces the former three rotating messages.
+The original bitmap font is scaled 4× without smoothing: the red RGB565 `0xF800`
+ink occupies x=36–123 and y=6–33, centered horizontally and vertically. The Neko
+pixels and scaling below the divider are unchanged. This label does not
+implement or change any unlocking or game behavior.
 
 ## Motion and pixel review
 

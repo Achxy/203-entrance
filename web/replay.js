@@ -2,7 +2,7 @@
 "use strict";
 (() => {
   const MAX = EntranceMedia.CAPACITY;
-  const messages = ["Shenanigans by the 203 dudes", "Achyuth & Jaideep", "Knock the mario theme to unlock the door"];
+  const messages = ["203"];
   class Replay {
     constructor(bytes) {
       const clip=EntranceMedia.decode(bytes);
@@ -20,16 +20,19 @@
       return this.images[this.frame].subarray(y*this.width,(y+1)*this.width);
     }
     paint(canvas, captionIndex = 0, rotation = 0) {
-      const w = rotation & 1 ? 160 : 128, h = rotation & 1 ? 128 : 160, header = h === 160 ? 50 : 40, glyph = 10;
+      const w = rotation & 1 ? 160 : 128, h = rotation & 1 ? 128 : 160, header = h === 160 ? 50 : 40;
       canvas.width = w; canvas.height = h; canvas.classList.toggle("landscape", Boolean(rotation & 1));
       const ctx = canvas.getContext("2d"), im = ctx.createImageData(w, h); for (let i = 3; i < im.data.length; i += 4) im.data[i] = 255;
       let dw = w, dh = h - header - 1; if (w * this.height > dh * this.width) dw = Math.floor(dh * this.width / this.height); else dh = Math.floor(w * this.height / this.width); dw=Math.max(1,dw); dh=Math.max(1,dh);
       const left = Math.floor((w - dw) / 2), top = header + 1 + Math.floor((h - header - 1 - dh) / 2);
       for (let y = 0; y < dh; y++) { const row = this.row(Math.floor(y * this.height / dh)); for (let x = 0; x < dw; x++) { const rgb = this.palette[row[Math.floor(x * this.width / dw)]]; im.data.set(rgb, ((top + y) * w + left + x) * 4); } }
-      const lines = []; let words = messages[captionIndex % 3].split(" "), line = "";
-      for (const word of words) { if (line && line.length + word.length + 1 > Math.floor(w / glyph)) { lines.push(line); line = word; } else line += (line ? " " : "") + word; } if (line) lines.push(line);
-      const textTop = Math.floor((header - lines.length * glyph) / 2);
-      lines.forEach((line, row) => { const x0 = Math.floor((w - line.length * glyph) / 2); for (let i = 0; i < line.length; i++) for (let y = 0; y < glyph; y++) for (let x = 0; x < glyph; x++) if (font[line.charCodeAt(i) * 8 + Math.floor(y * 8 / glyph)] & 1 << Math.floor(x * 8 / glyph)) im.data.set([255,255,255,255], ((textTop + row * glyph + y) * w + x0 + i * glyph + x) * 4); });
+      const scale = 4, inkWidth = 22 * scale, inkHeight = 7 * scale;
+      const textLeft = Math.floor((w - inkWidth) / 2), textTop = Math.floor((header - inkHeight) / 2);
+      for (let y = 0; y < inkHeight; y++) for (let x = 0; x < inkWidth; x++) {
+        const column = Math.floor(x / scale), ch = messages[0].charCodeAt(Math.floor(column / 8));
+        if (font[ch * 8 + Math.floor(y / scale)] & 1 << (column % 8))
+          im.data.set([255,0,0,255], ((textTop + y) * w + textLeft + x) * 4);
+      }
       for (let x = 0; x < w; x++) im.data.set([255, 255, 0, 255], (header * w + x) * 4);
       ctx.putImageData(im, 0, 0);
     }
@@ -39,7 +42,7 @@
 })();
 
 if (typeof document !== "undefined") (() => {
-  let state = null, busy = false, loading = false, preview = null, playing = false, timer = null, previewEpoch = 0, previewCaption = 0;
+  let state = null, busy = false, loading = false, preview = null, playing = false, timer = null;
   const duration = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
   function controls() {
     const unavailable = !signedIn || busy || loading || !state?.ready;
@@ -61,7 +64,7 @@ if (typeof document !== "undefined") (() => {
   async function change(body) {
     if (busy || loading) return;
     loading = true; controls();
-    try { await api("/display", { method: "PUT", body }); DisplayConsole.render(await api("/display")); text("replay-work", "Device playback updated. Caption timing continues independently."); }
+    try { await api("/display", { method: "PUT", body }); DisplayConsole.render(await api("/display")); text("replay-work", "Device playback updated. The room number stays fixed above the animation."); }
     catch (error) { text("replay-work", error.message); }
     finally { loading = false; controls(); }
   }
@@ -71,7 +74,7 @@ if (typeof document !== "undefined") (() => {
   function stop() { playing = false; clearTimeout(timer); text("replay-preview-toggle", preview ? "Play local preview" : "Load local preview"); $("replay-preview-toggle").setAttribute("aria-pressed", "false"); }
   async function tick() {
     if (!playing || document.hidden) return stop();
-    try { preview.paint($("replay-preview"), (previewCaption + Math.floor((performance.now() - previewEpoch) / 2000)) % 3, state?.rotation || 0); await preview.next(); }
+    try { preview.paint($("replay-preview"), 0, state?.rotation || 0); await preview.next(); }
     catch (error) { text("replay-work", error.message); return stop(); }
     timer = setTimeout(tick, preview.period);
   }
@@ -90,7 +93,6 @@ if (typeof document !== "undefined") (() => {
         const bytes = new Uint8Array(size); let at = 0; for (const chunk of chunks) { bytes.set(chunk, at); at += chunk.length; }
         preview = new EntranceReplay.Replay(bytes); await preview.seek(Math.min(state?.replay.frame || 0, preview.frames - 1));
       }
-      previewEpoch = performance.now(); previewCaption = state?.replay.caption_index || 0;
       playing = true; text("replay-preview-toggle", "Pause local preview"); $("replay-preview-toggle").setAttribute("aria-pressed", "true");
       text("replay-work", "Local preview only. The physical device continues on its own timeline."); tick();
     } catch (error) { preview = null; text("replay-work", error.message); stop(); }

@@ -12,7 +12,7 @@ The product is a reusable OTA foundation for an ESP32-C3 Super Mini, revision 0.
 | `release.c` | Public GitHub release checks, HTTPS policy, manifest verification and remote transfer |
 | `protocol.c` / `core.c` / `settings_policy.c` | Portable parsing, compatibility, SemVer, CRC and constant-time comparison |
 | `diagnostics.c` | Bounded events, memory/reset/slot status |
-| `display.c` / `media.c` / `builtin_loop.c` / `captions.c` | ST7735R SPI task, bounded ECL1 playback, independent captions, persistent media and panel controls |
+| `display.c` / `media.c` / `builtin_loop.c` / `captions.c` | ST7735R SPI task, bounded ECL1 playback, fixed room header, persistent media and panel controls |
 | `web/` / `tools/` | Offline browser console and certificate-pinned CLI using the same API |
 
 ## Flash layout

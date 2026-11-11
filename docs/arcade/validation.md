@@ -5,6 +5,26 @@ and relay are deployed, and the signed arcade firmware is installed. Actual
 phone-to-display Internet play and a final continuous operating soak remain
 open. The earlier OTA foundation results do not establish these new gates.
 
+## Prepared room-number header
+
+The owner's later request replaces the three rotating captions with a fixed
+red `203`, using the same bitmap font at 4× integer scale. The landscape header
+remains exactly rows 0–39, its yellow divider remains row 40, and the visible
+red ink is centered at x=36–123, y=6–33. No game source or Neko asset changed.
+All 144 C/browser raster comparisons pass. An aggregate digest captured from
+the preceding firmware confirms that the divider and every pixel below it
+remain byte-identical across all 24 frames and both orientations. The 68 host
+tests also pass. These are local checks; the new header is **not yet installed**
+on the inaccessible display.
+
+The next firmware also reports `station_mac`, `ap_mac` and the explicitly named
+`station_connected` network status field. Inspection of the installed source,
+ESP-IDF's interface mapping and the original USB chip records confirms the
+factory-derived, fixed station MAC policy; no application code overrides or
+randomizes MAC addresses. Actual driver addresses will be visible in the next
+firmware's authenticated status response. The legacy `network.online` field
+means DHCP connectivity, not verified campus Internet access.
+
 ## Installed display
 
 The second ESP32-C3, `entrance-c7f088`, confirmed signed `0.3.0-rc.9` through

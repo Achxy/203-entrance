@@ -25,11 +25,19 @@ The `display.replay` object reports `active`, `format`, `title`, source `width`
 and `height`, asset `bytes`, `frame`, `frames`, `period_us`, completed `loops`,
 `caption` and `caption_index`. The compatibility `chapters` field is `1`.
 Restart with `mode: replay` and `replay_chapter: 0`; other chapter indices are
-rejected. Pausing or restarting the loop leaves the two-second caption clock running.
+rejected. `caption` is the fixed room label `203`; `caption_index` remains `0`
+for API compatibility. Pausing or restarting the loop does not alter the label.
 The browser preview has its own local timeline; its controls are explicitly
 separate from device playback. See [Neko packing and frame verification](neko.md).
 
 ## Firmware and management operations
+
+Network status includes actual `station_mac` and `ap_mac` addresses read from
+the Wi-Fi driver. Register `station_mac` with a campus captive portal. Both
+`station_connected` and the legacy `online` field mean Wi-Fi association plus
+DHCP, not proof of Internet access; `relay.connected` reports authenticated
+connectivity to the arcade relay. The firmware uses factory-derived fixed MACs
+and does not randomize or override them.
 
 Base URL: `https://192.168.4.1/api/v1`. There is no plaintext management endpoint. Responses are JSON except bundled assets and binary clip downloads. Errors have `error` and `message` strings. Authentication errors are 401, origin/ticket failures 403, throttling 429, unknown operations 404 and rejected state/image/settings operations 409. Rejected requests close their connection so unread bodies cannot be mistaken for a subsequent request.
 

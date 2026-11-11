@@ -70,7 +70,7 @@ try {
       }));
       await page.waitForTimeout(2100);
     }
-    assert.equal(new Set(captionHashes).size,3,'Each message should appear in the two-second cycle');
+    assert.equal(new Set(captionHashes).size,1,'The room number must stay fixed while the cat animates');
     await page.locator('#replay-preview-toggle').click();
     await page.locator('#replay-restart').click();await page.locator('#replay-position').filter({hasText:'0:00 /'}).waitFor();
     await page.locator('#replay-studio').screenshot({path:`.local/browser/replay-${width}.png`});

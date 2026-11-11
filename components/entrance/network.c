@@ -201,11 +201,25 @@ cJSON *net_status(void)
     cJSON_AddStringToObject(j, "ap_ip", "192.168.4.1");
     cJSON_AddStringToObject(j, "station_ip", address);
     cJSON_AddStringToObject(j, "station_ssid", snapshot.ssid);
+    /* Report the actual interface addresses used by the driver. DHCP/IP
+       changes do not change these factory-derived MAC addresses. */
+    const wifi_interface_t interfaces[] = {WIFI_IF_STA, WIFI_IF_AP};
+    const char *mac_keys[] = {"station_mac", "ap_mac"};
+    for (unsigned i = 0; i < 2; i++) {
+        uint8_t mac[6];
+        char address_text[18];
+        if (esp_wifi_get_mac(interfaces[i], mac) == ESP_OK) {
+            snprintf(address_text, sizeof(address_text), "%02X:%02X:%02X:%02X:%02X:%02X",
+                     mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+            cJSON_AddStringToObject(j, mac_keys[i], address_text);
+        }
+    }
     cJSON_AddBoolToObject(j, "enabled", snapshot.enabled);
     cJSON_AddBoolToObject(j, "paused_for_arcade", arcade_guest_network() && !relay_enabled());
     cJSON_AddNumberToObject(j, "settings_generation", snapshot.generation);
     cJSON_AddNumberToObject(j, "settings_schema", snapshot.schema);
     cJSON_AddBoolToObject(j, "online", online);
+    cJSON_AddBoolToObject(j, "station_connected", online);
     cJSON_AddBoolToObject(j, "maintenance", maintenance);
     cJSON_AddNumberToObject(j, "disconnect_reason", disconnect_reason);
     cJSON_AddNumberToObject(j, "unix_time", time(NULL));
@@ -214,7 +228,7 @@ cJSON *net_status(void)
                          : (arcade_guest_network() && !relay_enabled())
                              ? "Uplink paused for local arcade play"
                          : maintenance ? "Disabled in maintenance mode"
-                         : online      ? "Connected"
+                         : online      ? "Wi-Fi connected; Internet access is checked separately"
                                        : "Connecting; local hotspot remains available";
     if (snapshot.enabled && !online && !maintenance &&
         (!arcade_guest_network() || relay_enabled())) {

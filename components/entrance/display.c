@@ -36,7 +36,6 @@ static union {
 #define pixels buffers.clip.pixels
 #define movie buffers.builtin.player
 static bool replay_loaded;
-static unsigned caption_index;
 extern const uint8_t replay_asset_start[] asm("_binary_neko_ecl_start");
 extern const uint8_t replay_asset_end[] asm("_binary_neko_ecl_end");
 static uint8_t *strip;
@@ -179,7 +178,7 @@ static esp_err_t draw(void)
         for (unsigned row = 0; row < 4; row++) {
             unsigned py = y + row;
             if (game_frame) arcade_frame_row(w, h, py, caption);
-            if (!game_frame && builtin && !builtin_loop_row(&movie, w, h, py, caption_index, caption))
+            if (!game_frame && builtin && !builtin_loop_row(&movie, w, h, py, 0, caption))
                 return ESP_ERR_INVALID_SIZE;
             bool pairing = arcade_pair_row(py, caption, w);
             for (unsigned x = 0; x < w; x++) {
@@ -246,9 +245,6 @@ static void display_task(void *arg)
             int64_t period = game_active ? 50000 : builtin ? movie.period_us : media_size ? 1000000 / info.fps : 100000;
             if (was_suspended || !next || dirty)
                 next = now + period;
-            unsigned caption_now = (unsigned)((uint64_t)now / (CAPTION_PERIOD_MS * 1000ULL) % 3);
-            bool caption_changed = builtin && caption_now != caption_index;
-            caption_index = caption_now;
             bool advance = playing && now >= next;
             if (advance) {
                 if (game_active) {
@@ -269,7 +265,7 @@ static void display_task(void *arg)
                 if (next < now)
                     next = now + period;
             }
-            if (dirty || advance || caption_changed) {
+            if (dirty || advance) {
                 if (driver_ready && draw() != ESP_OK)
                     driver_ready = false;
                 if (!driver_ready) {
@@ -617,8 +613,8 @@ cJSON *display_status(void)
     /* Keep the v1 restart selector compatible with older clients. */
     cJSON_AddNumberToObject(replay, "chapters", 1);
     cJSON_AddNumberToObject(replay, "loops", replay_loaded ? movie.loops : 0);
-    cJSON_AddStringToObject(replay, "caption", caption_text(caption_index));
-    cJSON_AddNumberToObject(replay, "caption_index", caption_index);
+    cJSON_AddStringToObject(replay, "caption", caption_text(0));
+    cJSON_AddNumberToObject(replay, "caption_index", 0);
     cJSON_AddBoolToObject(j, "brightness_control", false);
     cJSON_AddBoolToObject(j, "panel_feedback", false);
     xSemaphoreGive(mutex);
@@ -636,7 +632,7 @@ void display_telemetry(void)
              "\"late_frames\":%lu,\"caption\":%u,\"ready\":%s}",
              modes[config.mode], (unsigned long)(replay_loaded ? movie.frame : frame),
              (unsigned long)rendered, (unsigned long)(replay_loaded ? movie.loops : loops),
-             (unsigned long)last_frame_us, (unsigned long)late_frames, caption_index,
+             (unsigned long)last_frame_us, (unsigned long)late_frames, 0u,
              display_healthy() ? "true" : "false");
     xSemaphoreGive(mutex);
 }

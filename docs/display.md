@@ -8,9 +8,10 @@ continues after the browser closes and resumes after restart. Play, pause, blank
 panel rotation, inversion, and panel variant are saved only on explicit changes.
 Automatic schedules and additional scene logic are deferred.
 
-The default built-in replay uses landscape orientation, a 40-pixel caption area,
-10-pixel lettering and a one-pixel yellow divider. Its three messages change
-every **two seconds**, independently of playback. The Neko paw-wave animation is
+The default built-in replay uses landscape orientation, the unchanged 40-pixel
+header area and one-pixel yellow divider at row 40. A fixed vibrant-red **203**
+uses the original bitmap font at 4× integer scale. Its 88×28 visible pixels are
+centered in the header, with no switching text. The Neko paw-wave animation is
 fitted below the text with its original proportions. Built-in content resides
 inside the signed application and does not consume the custom clip allowance.
 See [Neko artwork, controls and frame validation](neko.md).

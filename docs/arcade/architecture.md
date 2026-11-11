@@ -4,7 +4,7 @@ The public entry point is `https://203.at.achyuth.dev`. The ESP32-C3 owns the
 simulation, display, player roles, clocks, admission, and deadlines. A phone is
 only a controller. The 160×128 ST7735R uses the existing SPI wiring and landscape
 orientation. When no game session is active, the signed application's Neko loop
-and independent two-second captions resume.
+and the fixed red room-number header resume.
 
 ## Connection and first use
 
