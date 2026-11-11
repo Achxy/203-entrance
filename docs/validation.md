@@ -46,10 +46,34 @@ were unchanged. Both initial and subsequent boots passed 30 continuous healthy
 seconds with advancing replay counters. Original/installed full-flash backups,
 credentials and installation evidence remain private and associated with that board.
 
-This is software/USB evidence **without an attached display**. Visible output,
-complete loop operation, concurrent HTTPS/OTA load and a 60-minute combined
-operating soak still require hardware validation. There is no valid previous
-application on this fresh board until an update populates the other slot.
+The initial installation checks above were performed **without an attached
+display**. The user subsequently soldered the panel and confirmed visible
+operation after supplying LED+ separately from 3V3. This does not establish
+complete loop operation, concurrent HTTPS/OTA load or a 60-minute combined
+operating soak. There is no valid previous application on this fresh board
+until an update populates the other slot.
+
+### Qualification checkpoint, 11 November 2026
+
+A fresh full-flash backup was verified against its metadata and retained the
+same identity and working RC9 application. The next USB installation stopped
+before writing because the board no longer enumerated. A further 15-minute wait
+did not recover the connection; the cause is unconfirmed. **No newer firmware
+was written and the 60-minute soak did not start in this attempt.**
+
+Source `9e0ca758bcdc4203269e5b8b8393c06985d2662d` corrects the USB outcome
+reporting defect below and strengthens the soak checks. Its 63 host tests,
+desktop/mobile browser regressions and Linux firmware/browser CI passed.
+Signed RC10 and RC39 qualification releases were published and downloaded;
+their bytes, SHA-256 sums, signed manifests and native image signatures matched.
+Private images and scripts are prepared for rejection/fault tests and 20
+alternating OTA cycles. Preparation and host downloads are not device OTA passes.
+
+Actual network checks require a shared reachable network. The Mac currently has
+only a Wi-Fi Internet uplink; its sharing UI offers no Wi-Fi output for that
+source. A separate Ethernet/USB Internet input would permit a Mac hotspot.
+Physical power-cut tests on the second board were unavailable by the user's
+response and are not inferred from software resets or the original board's tests.
 
 ## Defects found during qualification
 
@@ -87,4 +111,4 @@ Mocked browser APIs and native flash/signature doubles do not prove actual stora
 | Stability | Alternating-cycle evidence plus 60 continuous minutes without unexplained resets, heap loss, corrupted settings or management loss |
 | Delivery | Clean source/tag, passing CI, signed public release, installed final image and verified private USB recovery bundle |
 
-Display/electrical evidence belongs to the original board; the second board currently has software/USB evidence only. Phone-sized layouts use desktop Chromium; physical-phone certificate enrollment remains unverified. Original OTA power-cut/authentication/fault evidence can be carried forward only with its component scope stated. New display/storage behavior requires its own evidence.
+The original board supplied the detailed color/card observations; the second board has USB evidence and the user's subsequent confirmation of working display output. Phone-sized layouts use desktop Chromium; physical-phone certificate enrollment remains unverified. Original OTA power-cut/authentication/fault evidence can be carried forward only with its component scope stated. New display/storage behavior requires its own evidence.
