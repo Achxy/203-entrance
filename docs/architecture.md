@@ -12,6 +12,7 @@ The product is a reusable OTA foundation for an ESP32-C3 Super Mini, revision 0.
 | `release.c` | Public GitHub release checks, HTTPS policy, manifest verification and remote transfer |
 | `protocol.c` / `core.c` / `settings_policy.c` | Portable parsing, compatibility, SemVer, CRC and constant-time comparison |
 | `diagnostics.c` | Bounded events, memory/reset/slot status |
+| `display.c` / `media.c` | ST7735R SPI task, bounded ECL1 parser/decoder, persistent media and panel controls |
 | `web/` / `tools/` | Offline browser console and certificate-pinned CLI using the same API |
 
 ## Flash layout
@@ -21,12 +22,19 @@ The product is a reusable OTA foundation for an ESP32-C3 Super Mini, revision 0.
 | nvs | `0x9000` | `0x7000` | Versioned settings snapshots |
 | otadata | `0x10000` | `0x2000` | ESP-IDF redundant boot selection |
 | identity | `0x12000` | `0x6000` | Read-only credentials, HTTPS identity, manifest public key |
-| state | `0x18000` | `0x8000` | Update ticket hash, candidate digest and outcome |
+| state | `0x18000` | `0x8000` | Update journal plus quota-limited `media_v1` clip/config |
 | ota_0 | `0x20000` | `0x1E0000` | Signed application A |
 | ota_1 | `0x200000` | `0x1E0000` | Signed application B |
 | coredump | `0x3E0000` | `0x20000` | Crash capture |
 
 The bootloader starts at zero and the partition table at `0x8000`. OTA writes neither. Both application slots include all dashboard assets and the complete RSA signature sector. Build and release checks enforce the final signed size, including padding. There is no separate factory application.
+
+Display content is capped at 12 KiB, reserving space for two transactional NVS
+blob generations, the update journal, panel configuration and garbage collection.
+The display uses fixed buffers and a low-priority task; its heartbeat and SPI
+health participate in trial checks. Playback runs during trial, freezes during
+OTA transfer/activation, and resumes after an abort. Content changes share the
+operation mutex and cannot write flash during OTA. See [display details](display.md).
 
 ## Update transaction
 

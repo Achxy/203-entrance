@@ -1,6 +1,28 @@
 # Management API v1
 
-Base URL: `https://192.168.4.1/api/v1`. There is no plaintext management endpoint. Responses are JSON except bundled assets. Errors have `error` and `message` strings. Authentication errors are 401, origin/ticket failures 403, throttling 429, unknown operations 404 and rejected state/image/settings operations 409. Rejected requests close their connection so unread bodies cannot be mistaken for a subsequent request.
+## Display operations
+
+Display operations use the same authenticated session, CSRF/Origin checks and
+error model as firmware operations:
+
+| Method and path | Request / result |
+|---|---|
+| `GET /api/v1/display` | Driver, saved content hash/size, playback counters, errors, panel settings |
+| `PUT /api/v1/display` | JSON subset of `mode` (`test`, `play`, `pause`, `blank`), `profile` (`red`, `green`, `black`), `rotation` (0–3), `inverted` (boolean) |
+| `PUT /api/v1/display/clip` | `application/octet-stream`; complete validated ECL1 clip, maximum 12,288 bytes; replaces the saved clip after validation |
+| `GET /api/v1/display/clip` | Binary ECL1 download; 404 if unavailable |
+| `DELETE /api/v1/display/clip` | Explicit removal of the saved clip; does not erase the OTA journal or credentials |
+
+Media/config mutations are rejected during OTA/trial boot. `GET /status` and
+diagnostic exports include a `display` object. A successful clip upload does not
+change the selected playback mode; the browser's **Save and play** performs hash
+readback and then an explicit `mode: play` request. Identical clip uploads are
+idempotent. After a lost upload response, read the saved SHA-256 before retrying.
+See [ECL1 and the electrical/storage constraints](display.md).
+
+## Firmware and management operations
+
+Base URL: `https://192.168.4.1/api/v1`. There is no plaintext management endpoint. Responses are JSON except bundled assets and binary clip downloads. Errors have `error` and `message` strings. Authentication errors are 401, origin/ticket failures 403, throttling 429, unknown operations 404 and rejected state/image/settings operations 409. Rejected requests close their connection so unread bodies cannot be mistaken for a subsequent request.
 
 JSON requests use exactly `Content-Type: application/json`, at most 2048 bytes, unique keys and a flat object. Chunk bodies use `application/octet-stream`, at most 8192 bytes. All operations are local to the device; there is no Internet-facing listener configuration.
 

@@ -1,4 +1,5 @@
 #include "entrance.h"
+#include "display.h"
 #include "esp_timer.h"
 #include "esp_system.h"
 #include "esp_heap_caps.h"
@@ -121,5 +122,6 @@ cJSON *diag_status(void)
     }
     cJSON_AddItemToObject(j, "network", net_status());
     cJSON_AddItemToObject(j, "ota", ota_status());
+    cJSON_AddItemToObject(j, "display", display_status());
     return j;
 }

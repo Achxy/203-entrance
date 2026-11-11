@@ -11,6 +11,7 @@ A local developer console and signed OTA update system for an ESP32-C3 Super Min
 - Trial boot with 30 continuous healthy seconds, updater reconnection and a 120-second confirmation deadline. Explicit rollback, BOOT maintenance and USB recovery.
 - Unique USB-provisioned administrator credentials and HTTPS identity, certificate-pinned CLI, browser sessions, CSRF protection and authentication throttling.
 - Offline dark/light console, network controls, bounded events, diagnostic export, developer CLI, native policy tests and responsive browser tests.
+- ST7735R display studio: local image/video conversion, message rendering, persistent short loops, playback controls, and panel calibration using the supplied wiring. See [display setup and storage limits](docs/display.md).
 - Public source in [Achxy/203-entrance](https://github.com/Achxy/203-entrance) and separate signed assets in [Achxy/203-entrance-firmware](https://github.com/Achxy/203-entrance-firmware).
 
 Hardware Secure Boot, flash encryption and eFuse anti-rollback stay disabled. Software signature verification protects the OTA path while keeping USB recovery. Physical access can read or replace flash. No entrance-device behavior is implemented yet.
@@ -71,6 +72,7 @@ The certificate is retained across OTA and rollback. A changed fingerprint requi
 | `setup`, `doctor`, `build`, `test`, `audit` | Repeatable toolchain, build and policy checks |
 | `backup`, `flash`, `provision`, `monitor` | USB installation, identity and recovery |
 | `status`, `upload`, `rollback`, `diagnostics` | Local management and confirmed deployment |
+| `display`, `media` | Panel controls and verified persistent clip upload/download |
 | `network --ssid NAME`, `network --disable` | Optional uplink; password is prompted privately |
 | `check`, `install` | Verify and install a public GitHub release |
 | `keygen`, `sign`, `release --publish` | Local production signing and release publication |
@@ -93,6 +95,7 @@ No npm code, external fonts, CDN assets or Internet resources are required by th
 
 - [Architecture, partitions and security boundary](docs/architecture.md)
 - [API v1](docs/api.md)
+- [Display studio, wiring, clip format and storage](docs/display.md)
 - [Recovery and signing-key backups](docs/recovery.md)
 - [Release workflow](docs/releases.md)
 - [Troubleshooting](docs/troubleshooting.md)

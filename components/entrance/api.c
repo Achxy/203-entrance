@@ -1,4 +1,5 @@
 #include "entrance.h"
+#include "display.h"
 #include "protocol.h"
 #include "auth.h"
 #include "esp_https_server.h"
@@ -17,6 +18,10 @@ extern const uint8_t js_start[] asm("_binary_app_js_start");
 extern const uint8_t js_end[] asm("_binary_app_js_end");
 extern const uint8_t css_start[] asm("_binary_style_css_start");
 extern const uint8_t css_end[] asm("_binary_style_css_end");
+extern const uint8_t media_js_start[] asm("_binary_media_js_start");
+extern const uint8_t media_js_end[] asm("_binary_media_js_end");
+extern const uint8_t display_js_start[] asm("_binary_display_js_start");
+extern const uint8_t display_js_end[] asm("_binary_display_js_end");
 
 static void headers(httpd_req_t *r)
 {
@@ -25,7 +30,8 @@ static void headers(httpd_req_t *r)
     httpd_resp_set_hdr(r, "Referrer-Policy", "no-referrer");
     httpd_resp_set_hdr(
         r, "Content-Security-Policy",
-        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
+        "media-src blob:; "
         "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
 }
 static esp_err_t json_response(httpd_req_t *r, cJSON *json, const char *status)
@@ -183,7 +189,8 @@ static esp_err_t route(httpd_req_t *r)
     vTaskDelay(1);
     const char *uri = r->uri;
     if (r->method == HTTP_GET &&
-        (!strcmp(uri, "/") || !strcmp(uri, "/app.js") || !strcmp(uri, "/style.css"))) {
+        (!strcmp(uri, "/") || !strcmp(uri, "/app.js") || !strcmp(uri, "/style.css") ||
+         !strcmp(uri, "/media.js") || !strcmp(uri, "/display.js"))) {
         const uint8_t *start = html_start, *end = html_end;
         const char *type = "text/html; charset=utf-8";
         if (!strcmp(uri, "/app.js")) {
@@ -195,6 +202,16 @@ static esp_err_t route(httpd_req_t *r)
             start = css_start;
             end = css_end;
             type = "text/css; charset=utf-8";
+        }
+        if (!strcmp(uri, "/media.js")) {
+            start = media_js_start;
+            end = media_js_end;
+            type = "text/javascript; charset=utf-8";
+        }
+        if (!strcmp(uri, "/display.js")) {
+            start = display_js_start;
+            end = display_js_end;
+            type = "text/javascript; charset=utf-8";
         }
         headers(r);
         httpd_resp_set_type(r, type);
@@ -254,6 +271,50 @@ static esp_err_t route(httpd_req_t *r)
     }
     if (!strcmp(uri, "/api/v1/status") && r->method == HTTP_GET)
         return json_response(r, diag_status(), "200 OK");
+    if (!strcmp(uri, "/api/v1/display") && r->method == HTTP_GET)
+        return json_response(r, display_status(), "200 OK");
+    if (!strcmp(uri, "/api/v1/display") && r->method == HTTP_PUT) {
+        cJSON *j = read_json(r);
+        esp_err_t err = display_configure(j);
+        cJSON_Delete(j);
+        return outcome(r, err);
+    }
+    if (!strcmp(uri, "/api/v1/display/clip") && r->method == HTTP_PUT) {
+        char type[64];
+        if (!header(r, "Content-Type", type, sizeof(type)) ||
+            strcmp(type, "application/octet-stream") || !r->content_len ||
+            r->content_len > MEDIA_MAX_BYTES)
+            return outcome(r, ESP_ERR_INVALID_SIZE);
+        uint8_t *data = malloc(r->content_len);
+        if (!data)
+            return outcome(r, ESP_ERR_NO_MEM);
+        esp_err_t err = read_body(r, data, MEDIA_MAX_BYTES) ? display_install(data, r->content_len)
+                                                            : ESP_ERR_TIMEOUT;
+        free(data);
+        if (err == ESP_ERR_INVALID_ARG)
+            return error_response(r, "409 Conflict", "invalid_clip",
+                                  "Clip format, checksum or frame bounds are invalid. Prepare or "
+                                  "export the clip again.");
+        if (err == ESP_ERR_NVS_NOT_ENOUGH_SPACE)
+            return error_response(r, "409 Conflict", "media_storage",
+                                  "Media storage could not reserve a replacement. Export the "
+                                  "current clip and inspect storage diagnostics.");
+        return outcome(r, err);
+    }
+    if (!strcmp(uri, "/api/v1/display/clip") && r->method == HTTP_DELETE)
+        return outcome(r, display_remove());
+    if (!strcmp(uri, "/api/v1/display/clip") && r->method == HTTP_GET) {
+        size_t size;
+        uint8_t *data = display_copy(&size);
+        if (!data)
+            return error_response(r, "404 Not Found", "no_clip", "No readable clip is saved.");
+        headers(r);
+        httpd_resp_set_type(r, "application/octet-stream");
+        httpd_resp_set_hdr(r, "Content-Disposition", "attachment; filename=display.eclip");
+        esp_err_t err = httpd_resp_send(r, (const char *)data, size);
+        free(data);
+        return err;
+    }
     if (!strcmp(uri, "/api/v1/diagnostics") && r->method == HTTP_GET) {
         cJSON *j = diag_status();
         cJSON_AddItemToObject(j, "logs", diag_logs(0));

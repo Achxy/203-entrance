@@ -12,7 +12,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.join(root, '.local/browser');
 await mkdir(output, {recursive: true});
 const server = http.createServer(async (req, res) => {
-  const file = {'/':'index.html', '/app.js':'app.js', '/style.css':'style.css'}[req.url];
+  const file = {'/':'index.html', '/app.js':'app.js', '/style.css':'style.css', '/media.js':'media.js', '/display.js':'display.js'}[req.url];
   if (!file) { res.writeHead(404).end(); return; }
   res.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html');
   res.end(await readFile(path.join(root, 'web', file)));

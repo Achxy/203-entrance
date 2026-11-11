@@ -1,4 +1,5 @@
 #include "entrance.h"
+#include "display.h"
 #include "esp_task_wdt.h"
 #include "esp_timer.h"
 #include "esp_system.h"
@@ -30,8 +31,8 @@ static void health_task(void *arg)
             net_maintenance();
             storage_maintenance = true;
         }
-        bool healthy = services && net_ready() && api_ready() && settings_healthy &&
-                       esp_get_free_heap_size() > 24000;
+        bool healthy = services && net_ready() && api_ready() && display_healthy() &&
+                       settings_healthy && esp_get_free_heap_size() > 24000;
 #if ENTRANCE_TEST_FAULT == 1
         if (ota_trial())
             healthy = false;

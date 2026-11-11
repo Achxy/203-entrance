@@ -68,6 +68,7 @@ function controls() {
   $("install-release").disabled = busy || !lastStatus?.network?.online || !release?.verified || !release?.newer;
   $("image").disabled = busy;
   $("network-form").querySelectorAll("button,input").forEach((element) => { element.disabled = busy; });
+  globalThis.DisplayConsole?.controls(busy);
 }
 function render(status) {
   lastStatus = status;
@@ -92,6 +93,7 @@ function render(status) {
   text("station-detail", status.network.station_detail || (status.network.online ? "Connected" : "Optional uplink is offline"));
   text("network-badge", status.network.maintenance ? "Maintenance" : status.network.online ? "Hotspot + uplink" : "Hotspot only");
   if (document.activeElement !== $("ssid") && !$("ssid").value) $("ssid").value = status.network.station_ssid || "";
+  globalThis.DisplayConsole?.render(status.display);
   controls();
 }
 async function poll() {

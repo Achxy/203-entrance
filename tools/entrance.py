@@ -339,7 +339,7 @@ class Device:
         self.connection = None
         self.recovered_chunks = 0
 
-    def request(self, method, path, body=None, *, ticket=None, headers=None, authenticated=True, timeout=20):
+    def request(self, method, path, body=None, *, ticket=None, headers=None, authenticated=True, timeout=20, raw=False):
         if self.connection is None or self.connection.sock is None:
             context = ssl.create_default_context(cafile=self.profile["certificate"])
             # Identity is additionally pinned, so DHCP station addresses are also usable.
@@ -366,7 +366,7 @@ class Device:
             connection.request(method, path, body=body, headers=request_headers)
             response = connection.getresponse()
             data = response.read(256 * 1024)
-            result = json.loads(data) if data else {}
+            result = data if raw and response.status < 400 else (json.loads(data) if data else {})
             if response.status >= 400:
                 raise APIError(response.status, result)
             return result
@@ -688,6 +688,53 @@ def cmd_soak(args):
     print("Soak samples saved:", args.output)
 
 
+def cmd_display(args):
+    device = Device(args.host)
+    device.login()
+    body = {key: value for key in ("mode", "profile", "rotation", "inverted")
+            if (value := getattr(args, key)) is not None}
+    if body:
+        device.request("PUT", "/api/v1/display", body)
+    print(json.dumps(device.request("GET", "/api/v1/display"), indent=2))
+
+
+def cmd_media(args):
+    from media import inspect_clip
+    path = Path(args.file) if args.file else None
+    if args.action in {"info", "upload", "download"} and path is None:
+        raise ValueError("This media action requires --file")
+    if args.action in {"info", "upload"}:
+        if path.stat().st_size > 12288:
+            raise ValueError("Clip exceeds the 12 KiB storage budget")
+        data = path.read_bytes()
+        metadata = inspect_clip(data)
+        if args.action == "info":
+            print(json.dumps(metadata, indent=2))
+            return
+    device = Device(args.host)
+    device.login()
+    if args.action == "upload":
+        expected = hashlib.sha256(data).hexdigest()
+        try:
+            device.request("PUT", "/api/v1/display/clip", data,
+                           headers={"Content-Type": "application/octet-stream"})
+        except (OSError, http.client.HTTPException):
+            # Resolve a lost acknowledgement by readback; never blindly replay a save.
+            if device.request("GET", "/api/v1/display").get("sha256") != expected:
+                raise RuntimeError("Clip save was not acknowledged; inspect saved content before retrying") from None
+        if device.request("GET", "/api/v1/display").get("sha256") != expected:
+            raise ValueError("Saved clip differs from the requested content")
+        if args.play:
+            device.request("PUT", "/api/v1/display", {"mode": "play"})
+    elif args.action == "download":
+        data = device.request("GET", "/api/v1/display/clip", raw=True)
+        inspect_clip(data)
+        private_write(path, data)
+    elif args.action == "delete":
+        device.request("DELETE", "/api/v1/display/clip")
+    print(json.dumps(device.request("GET", "/api/v1/display"), indent=2))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -695,13 +742,14 @@ def main():
                 "test": cmd_test, "audit": cmd_audit, "backup": cmd_backup, "provision": cmd_provision, "flash": cmd_flash,
                 "status": cmd_status, "upload": cmd_upload, "network": cmd_network, "check": cmd_check,
                 "install": cmd_install, "rollback": cmd_rollback, "diagnostics": cmd_diagnostics,
-                "sign": cmd_sign, "release": cmd_release, "monitor": cmd_monitor, "soak": cmd_soak}
+                "sign": cmd_sign, "release": cmd_release, "monitor": cmd_monitor, "soak": cmd_soak,
+                "display": cmd_display, "media": cmd_media}
     for name, handler in handlers.items():
         p = sub.add_parser(name)
         p.set_defaults(handler=handler)
         if name in {"backup", "provision", "flash", "monitor", "soak"}:
             p.add_argument("--port")
-        if name in {"status", "upload", "network", "check", "install", "rollback", "diagnostics", "soak"}:
+        if name in {"status", "upload", "network", "check", "install", "rollback", "diagnostics", "soak", "display", "media"}:
             p.add_argument("--host")
         if name == "build":
             p.add_argument("--version", default="0.1.0")
@@ -714,6 +762,15 @@ def main():
             p.add_argument("--ssid")
             p.add_argument("--disable", action="store_true")
         if name == "diagnostics": p.add_argument("--output", default=str(LOCAL / "diagnostics.json"))
+        if name == "display":
+            p.add_argument("--mode", choices=["play", "pause", "blank", "test"])
+            p.add_argument("--profile", choices=["red", "green", "black"])
+            p.add_argument("--rotation", type=int, choices=range(4))
+            p.add_argument("--inverted", action=argparse.BooleanOptionalAction, default=None)
+        if name == "media":
+            p.add_argument("action", choices=["info", "upload", "download", "delete"])
+            p.add_argument("--file")
+            p.add_argument("--play", action="store_true", help="Start autonomous playback after verified upload")
         if name == "sign": p.add_argument("--output", required=True)
         if name == "check": p.add_argument("--version", help="Explicit versioned release check; default checks latest stable")
         if name == "release":

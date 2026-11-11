@@ -1,4 +1,5 @@
 #include "entrance.h"
+#include "display.h"
 #include "esp_log.h"
 
 void app_main(void)
@@ -22,6 +23,8 @@ void app_main(void)
     err = net_init();
     if (err == ESP_OK)
         err = api_start();
+    if (err == ESP_OK)
+        err = display_start();
     health_set_services(err == ESP_OK);
     if (err != ESP_OK) {
         ESP_LOGE("boot", "Management startup failed: %s", esp_err_to_name(err));
