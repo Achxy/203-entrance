@@ -1,4 +1,5 @@
 #pragma once
+#define ESP_ERR_TIMEOUT 0x107
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>

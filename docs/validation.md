@@ -1,6 +1,11 @@
 # Validation record
 
-**Qualification is in progress; no stable release has been declared.** The user expanded the OTA foundation to include an ST7735R, persistent short clips and an autonomous full-game scene replay. Combined hardware checks and a continuous operating soak remain required. Public `0.1.0` and `0.1.1` assets are prereleases; `0.1.0` is explicitly superseded because qualification found a maintenance-startup defect.
+**Qualification is in progress; no stable release has been declared.** The user expanded the OTA foundation to include an ST7735R, persistent short clips and an autonomous built-in animation (initially Mario, now Neko by request). Combined hardware checks and a continuous operating soak remain required. Public `0.1.0` and `0.1.1` assets are prereleases; `0.1.0` is explicitly superseded because qualification found a maintenance-startup defect.
+
+The scope now also includes phone-controlled games, the public site, Clerk
+identity/guest records and an Internet relay. See the [arcade checkpoint](arcade/validation.md)
+for the installed RC9 image, production web checks, campus relay timeout and
+the explicit prohibition on further laptop Wi-Fi switching.
 
 ## Hardware and preservation
 
@@ -29,7 +34,7 @@ The corrected OTA-only cycle series **completed all 20 alternating updates**, us
 - The complete asset contains all 32 levels and the ending: **16,500 frames, 1,647.294 seconds, 693,570 bytes**. Offline capture compared all 16,484 sampled 256×240 palette-index rasters with the shipped C renderer, with zero mismatches. The C decoder also reproduced all 16,500 packed scenes and wrapped correctly. Exact source hashes and reproducible evidence are in [replay provenance](../assets/replay-provenance.json).
 - No ROM program code or emulator runs on the board. The controller sequence is locally planned, favors walking, traverses every level, and is replayed continuously from power-on. Imported speedrun/TAS movies were excluded.
 
-The Mac currently retains its Internet network; the previously shared phone uplink is unavailable. USB work continues without joining the ESP's offline hotspot. Actual combined-firmware HTTPS/OTA tests require a reachable shared network and remain a separate gate.
+The earlier USB-only period ended when the second board was permanently installed. Subsequent hotspot access and actual OTA evidence are recorded below; shared-network testing remains a separate gate.
 
 ## Second-board installation
 
@@ -58,7 +63,7 @@ until an update populates the other slot.
 A fresh full-flash backup was verified against its metadata and retained the
 same identity and working RC9 application. The next USB installation stopped
 before writing because the board no longer enumerated. A further 15-minute wait
-did not recover the connection; the cause is unconfirmed. **No newer firmware
+did not recover the connection. The user subsequently confirmed that the board had been permanently installed elsewhere. **No newer firmware
 was written and the 60-minute soak did not start in this attempt.**
 
 Source `9e0ca758bcdc4203269e5b8b8393c06985d2662d` corrects the USB outcome
@@ -94,7 +99,7 @@ or credential/settings persistence.
 
 ## Automated combined-firmware checks
 
-- **63 host test methods pass**, with additional subcases: actual C compatibility/SemVer/CRC, request/manifest parsing, authentication, settings selection and OTA state transitions, plus Python RSA verification and client recovery. Media tests execute the actual C parser/decoder and compare the CLI parser over 1,500 deterministic mutations, all truncations, malformed runs, invalid colors, odd-pixel padding and size bounds. Replay tests cover packed deltas, block boundaries, seeks, loops, malformed scenes and index bounds; USB tests reject stale/reset/unhealthy/wrong-version boot evidence, allow bounded initial startup, verify the initial valid baseline record and preserve separate device profiles. Soak tests reject incomplete windows, resets, stalled replay, missing loop boundaries, settings changes and progressive heap loss.
+- **65 host test methods pass**, with additional subcases: actual C compatibility/SemVer/CRC, request/manifest parsing, authentication, settings selection and OTA state transitions, plus Python RSA verification and client recovery. Media tests execute the actual C parser/decoder and compare the CLI parser over 1,500 deterministic mutations, all truncations, malformed runs, invalid colors, odd-pixel padding and size bounds. Replay tests cover packed deltas, block boundaries, seeks, loops, malformed scenes and index bounds; USB tests reject stale/reset/unhealthy/wrong-version boot evidence, allow bounded initial startup, verify the initial valid baseline record and preserve separate device profiles. Soak tests reject incomplete windows, resets, stalled replay, missing loop boundaries, settings changes and progressive heap loss.
 - JavaScript ECL1 round trips, palette quantization, checksum and bounds pass.
 - Mocked browser regressions pass at 1440/390/320 pixels. The display editor additionally passes both themes, real browser WebM decoding, message conversion, preview, save hash readback, lost acknowledgement, pause, download, removal, invalid clips and duration limits. Replay controls, keyboard activation, landscape preview, the yellow divider and all three captions in a two-second cycle pass. All six portrait/landscape caption renderings were compared pixel-for-pixel between C and the browser. Screenshots were inspected; no horizontal overflow or external assets were observed.
 - Signed display candidate `0.2.0-rc.1` is 1,183,744 bytes including signature padding, leaving 782,336 bytes in each unchanged application slot. Native signature verification and recovery-policy checks pass.
@@ -105,10 +110,80 @@ Mocked browser APIs and native flash/signature doubles do not prove actual stora
 
 | Gate | Required evidence |
 |---|---|
-| Display hardware | Full replay on an attached display, both loop boundaries and actual browser controls under replay load; second-board USB installation has passed |
+| Display hardware | Neko visibility on the attached panel, loop continuity and actual browser controls under animation load; second-board USB installation and earlier Mario visibility passed |
 | Media storage | Combined replay/custom-mode persistence across OTA and rollback; earlier full-capacity/rejection cases have passed |
 | Combined regression | Actual browser controls and signed updates under display load |
 | Stability | Alternating-cycle evidence plus 60 continuous minutes without unexplained resets, heap loss, corrupted settings or management loss |
 | Delivery | Clean source/tag, passing CI, signed public release, installed final image and verified private USB recovery bundle |
 
 The original board supplied the detailed color/card observations; the second board has USB evidence and the user's subsequent confirmation of working display output. Phone-sized layouts use desktop Chromium; physical-phone certificate enrollment remains unverified. Original OTA power-cut/authentication/fault evidence can be carried forward only with its component scope stated. New display/storage behavior requires its own evidence.
+
+## Remote access and Neko replacement, 11 November 2026
+
+Certificate-pinned access to the second board's hotspot was established without
+USB. On RC9 the dashboard loaded, but valid password verification took 66.3 s,
+exceeding the supplied clients' 45 s login timeout. The pixel-transfer path was
+polling for roughly 41 ms of each frame's wire time. Bulk strips now use blocking
+DMA completion, releasing the CPU while retaining bounded polling for commands.
+
+**Actual hotspot OTA of RC40 passed**, including inactive-slot upload, signature
+verification, reboot, fresh ticket contact and healthy confirmation. RC9 remained
+available as a valid rollback target. Valid login improved to 30.7 s including
+TLS; observed rendering was approximately 10.3 fps. The Mac returned to its
+Internet Wi-Fi automatically. This short measurement is not a one-hour soak.
+
+The user then requested that the Mario artwork be replaced by a Neko paw wave.
+The Neko asset is 10,582 bytes, 24 frames, eight poses, 10 fps and 2.4 seconds.
+All frames were inspected; static body drift and the wrap transition are zero.
+The production C decoder passed 100 complete loops against per-frame hashes.
+All 144 full panel rasters (24 frames × two orientations × three captions)
+matched between the C renderer and browser. The complete host suite has 65
+methods; desktop/mobile conversion, keyboard, theme, offline asset and
+acknowledgement-recovery regressions passed. See [Neko evidence](neko.md).
+
+The private RC41 candidate is 1,183,744 bytes including RSA padding, leaving
+782,336 bytes in each unchanged OTA slot. Initial installation was prevented
+before any write when the hotspot disappeared; the user confirmed accidental
+power-off and subsequently restored power. The retry and final publication
+status are recorded separately below. No Neko operating-soak pass is inferred
+from the earlier Mario uptime or original-board qualification.
+
+The campus association took longer than the initial setup window. Later status
+confirmed a station DHCP address, but a certificate-pinned connection from the
+Mac to that address timed out, and the device clock remained unsynchronized.
+Association alone is not proof of Internet access or peer reachability. The
+management hotspot remains available. GitHub downloads and a continuous
+online-host soak still need a reachable shared network. Actual second-board
+power-cut qualification remains unavailable by the user's earlier response.
+
+The powered-on retry **installed RC41 over the local hotspot and confirmed it
+healthy**. Its embedded ECL1 readback matched SHA-256
+`0f95e0adc4c32d7d6cc936444043c52602710330be2f0f78885b62a79ad35c9e`.
+Settings generation 2 and panel configuration survived; RC40 remained a valid
+rollback target. Login took 28.6 seconds including TLS. The measured rendering
+counter advanced about 10.5 times/second (including caption-only redraws; the
+animation period is 100 ms). This is a short installation check, not a soak.
+
+Live browser testing on RC41 exposed insufficient TLS memory margin: minimum
+free heap reached 2,240 bytes, and one page load did not show the display
+controls. Subsequent controls passed, but that memory margin was unacceptable.
+RC42 enables ESP-IDF dynamic TLS record buffers while retaining the full 16 KiB
+incoming record limit, certificate verification and reusable server key/config.
+Its signed hotspot update and healthy confirmation passed. With the live browser
+open, minimum observed heap was **48,336 bytes**, with 128,304 bytes free across
+the active-playback samples. There were no resets in that measured interval.
+
+The actual certificate-pinned console passed at 1440/390/320 pixels in both
+themes. Play/pause and keyboard activation worked; a paused paw retained its frame
+while all three captions changed. After resuming, 12 samples spanning 22.35 s
+showed 224 redraws and nine complete Neko loops, with all three captions and
+healthy services. Playback was left running. The user explicitly confirmed
+that **both the physical cat and text were moving again** after the update.
+The earlier frozen screen report coincided with update/pause testing and is not
+counted as an unexplained operating reset or a completed soak.
+
+An initial three-sample caption test aliased the two-second cycle because each
+request added latency; it was replaced by bounded frequent sampling. The raw
+browser trace also recorded an aborted preview request despite successful preview
+and control checks. The preview now cancels its download timer on completion;
+final live verification remains necessary before treating that trace as resolved.

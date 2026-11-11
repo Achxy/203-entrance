@@ -12,7 +12,9 @@ A local developer console and signed OTA update system for an ESP32-C3 Super Min
 - Unique USB-provisioned administrator credentials and HTTPS identity, certificate-pinned CLI, browser sessions, CSRF protection and authentication throttling.
 - Offline dark/light console, network controls, bounded events, diagnostic export, developer CLI, native policy tests and responsive browser tests.
 - ST7735R display studio: local image/video conversion, message rendering, persistent short loops, playback controls, and panel calibration using the supplied wiring. See [display setup and storage limits](docs/display.md).
-- Built-in NES scene replay, independent two-second captions, landscape output and a yellow divider. The offline recorder verifies sampled pixels against an emulator; the ESP runs a bounded scene decoder. See [replay content and reproduction](docs/replay.md).
+- Built-in Neko paw-wave loop, independent two-second captions, landscape output and a yellow divider. All 24 frames use a shared palette and fit in 10.3 KiB. See [artwork, frame validation and reproduction](docs/neko.md).
+- Tetris, one- or two-player Pong and a compact Pac-Man adaptation, with phone controls, physical pairing codes, inactivity release and a five-minute hard turn limit.
+- [Public controller website](https://203.at.achyuth.dev), optional Google identity, a private Clerk-linked guest book and an authenticated outbound WebSocket relay. Internet play is the primary route; the local guest hotspot is a fallback. See the [arcade qualification record](docs/arcade/validation.md) before relying on the Internet route.
 - Public source in [Achxy/203-entrance](https://github.com/Achxy/203-entrance) and separate signed assets in [Achxy/203-entrance-firmware](https://github.com/Achxy/203-entrance-firmware).
 
 Hardware Secure Boot, flash encryption and eFuse anti-rollback stay disabled. Software signature verification protects the OTA path while keeping USB recovery. Physical access can read or replace flash. No entrance-device behavior is implemented yet.
@@ -105,6 +107,8 @@ The certificate is retained across OTA and rollback. A changed fingerprint requi
 | `backup`, `flash`, `usb-install`, `provision`, `monitor` | USB installation, identity and recovery |
 | `status`, `upload`, `rollback`, `diagnostics` | Local management and confirmed deployment |
 | `display`, `media` | Panel controls and verified persistent clip upload/download |
+| `arcade status`, `arcade release`, `arcade pairing`, `arcade visits` | Owner-only stage controls and private admission diagnostics |
+| `relay`, `relay --enable --relay-host HOST`, `relay --disable` | Inspect or configure the outbound game relay through pinned owner HTTPS |
 | `network --ssid NAME`, `network --disable` | Optional uplink; password is prompted privately |
 | `check`, `install` | Verify and install a public GitHub release |
 | `keygen`, `sign`, `release --publish` | Local production signing and release publication |
@@ -132,3 +136,7 @@ No npm code, external fonts, CDN assets or Internet resources are required by th
 - [Release workflow](docs/releases.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Hardware validation and remaining gates](docs/validation.md)
+- [Arcade architecture, security and connectivity](docs/arcade/architecture.md)
+- [Arcade API and owner commands](docs/arcade/api.md)
+- [Arcade research and evidence limits](docs/arcade/research.md)
+- [Arcade qualification checkpoint](docs/arcade/validation.md)

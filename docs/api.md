@@ -8,8 +8,8 @@ error model as firmware operations:
 | Method and path | Request / result |
 |---|---|
 | `GET /api/v1/display` | Driver, saved content hash/size, playback counters, errors, panel settings |
-| `PUT /api/v1/display` | JSON subset of `mode` (`test`, `play`, `pause`, `blank`, `replay`, `replay_pause`), `profile` (`red`, `green`, `black`), `rotation` (0–3), `inverted` (boolean), `replay_chapter` (zero-based chapter index) |
-| `GET /api/v1/display/replay` | Authenticated binary RPL1 download for local preview; 409 during OTA, at most 737,280 bytes |
+| `PUT /api/v1/display` | JSON subset of `mode` (`test`, `play`, `pause`, `blank`, `replay`, `replay_pause`), `profile` (`red`, `green`, `black`), `rotation` (0–3), `inverted` (boolean), `replay_chapter` (`0` to restart the built-in loop) |
+| `GET /api/v1/display/replay` | Authenticated binary ECL1 download for local preview; 409 during OTA, at most 12,288 bytes |
 | `PUT /api/v1/display/clip` | `application/octet-stream`; complete validated ECL1 clip, maximum 12,288 bytes; replaces the saved clip after validation |
 | `GET /api/v1/display/clip` | Binary ECL1 download; 404 if unavailable |
 | `DELETE /api/v1/display/clip` | Explicit removal of the saved clip; does not erase the OTA journal or credentials |
@@ -21,12 +21,13 @@ readback and then an explicit `mode: play` request. Identical clip uploads are
 idempotent. After a lost upload response, read the saved SHA-256 before retrying.
 See [ECL1 and the electrical/storage constraints](display.md).
 
-The `display.replay` object reports `active`, asset `bytes`, `frame`, `frames`,
-`period_us`, `chapters`, current `world`/`level`, completed `loops`, `caption` and
-`caption_index`. Restart or seek by selecting `mode: replay` and a chapter.
-Pausing or seeking gameplay leaves the two-second caption clock running.
+The `display.replay` object reports `active`, `format`, `title`, source `width`
+and `height`, asset `bytes`, `frame`, `frames`, `period_us`, completed `loops`,
+`caption` and `caption_index`. The compatibility `chapters` field is `1`.
+Restart with `mode: replay` and `replay_chapter: 0`; other chapter indices are
+rejected. Pausing or restarting the loop leaves the two-second caption clock running.
 The browser preview has its own local timeline; its controls are explicitly
-separate from device playback. See [RPL1 and capture verification](replay.md).
+separate from device playback. See [Neko packing and frame verification](neko.md).
 
 ## Firmware and management operations
 

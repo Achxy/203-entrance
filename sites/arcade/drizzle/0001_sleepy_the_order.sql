@@ -1,0 +1,1 @@
+ALTER TABLE `visits` ADD `sync_started` integer DEFAULT 0 NOT NULL;

@@ -12,7 +12,7 @@ The product is a reusable OTA foundation for an ESP32-C3 Super Mini, revision 0.
 | `release.c` | Public GitHub release checks, HTTPS policy, manifest verification and remote transfer |
 | `protocol.c` / `core.c` / `settings_policy.c` | Portable parsing, compatibility, SemVer, CRC and constant-time comparison |
 | `diagnostics.c` | Bounded events, memory/reset/slot status |
-| `display.c` / `media.c` | ST7735R SPI task, bounded ECL1 parser/decoder, persistent media and panel controls |
+| `display.c` / `media.c` / `builtin_loop.c` / `captions.c` | ST7735R SPI task, bounded ECL1 playback, independent captions, persistent media and panel controls |
 | `web/` / `tools/` | Offline browser console and certificate-pinned CLI using the same API |
 
 ## Flash layout
@@ -71,3 +71,12 @@ Reference: [ESP-IDF OTA](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp
 ## Scheduling under cryptographic load
 
 The HTTPS server and release worker run at the idle task priority with ESP-IDF time slicing enabled. This gives IDLE a CPU share even inside a long PSA password derivation or TLS operation. The independent health task and radio tasks retain higher priority. Both the idle watchdog and the 15-second health watchdog remain enabled. Authentication clients allow 45 seconds for a bounded login; ordinary requests keep shorter deadlines.
+
+The built-in Neko animation uses `builtin_loop.c`, the bounded ECL1 decoder and
+`captions.c`; the historical NES decoder is not linked into the current image.
+Pixel strips use blocking DMA completion, letting HTTPS/IDLE run while the SPI
+peripheral transmits. Tiny panel commands remain synchronous polling operations.
+TLS uses dynamic record buffers, with the standard 16 KiB incoming limit intact,
+so idle browser sockets do not each retain a complete TX/RX buffer pair. Server
+certificate/key configuration is retained for subsequent handshakes. The build
+audit enforces dynamic buffers after live qualification found low heap margin.

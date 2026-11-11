@@ -1,5 +1,6 @@
 #include "entrance.h"
 #include "display.h"
+#include "arcade.h"
 #include "esp_task_wdt.h"
 #include "esp_timer.h"
 #include "esp_system.h"
@@ -32,12 +33,13 @@ static void health_task(void *arg)
             storage_maintenance = true;
         }
         bool healthy = services && net_ready() && api_ready() && display_healthy() &&
-                       settings_healthy && esp_get_free_heap_size() > 24000;
+                       settings_healthy && arcade_healthy() && esp_get_free_heap_size() > 24000;
 #if ENTRANCE_TEST_FAULT == 1
         if (ota_trial())
             healthy = false;
 #endif
         ota_tick(healthy);
+        diag_health_sample(healthy);
         int64_t now = esp_timer_get_time();
         if (now >= telemetry_at) {
             telemetry_at = now + 15000000;

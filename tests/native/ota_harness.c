@@ -20,6 +20,21 @@ static esp_ota_img_states_t boot_state;
 static update_record_t journal;
 static esp_err_t load_error, store_error, signature_error, flash_error, activation_error;
 static bool previous_valid, maintenance_called;
+static bool relay_can_quiesce = true, relay_reserved, checking_release;
+bool release_checking(void)
+{
+    return checking_release;
+}
+bool relay_quiesce(void)
+{
+    relay_reserved = relay_can_quiesce;
+    return relay_reserved;
+}
+void relay_resume(void)
+{
+    assert(relay_reserved);
+    relay_reserved = false;
+}
 static esp_app_desc_t app;
 #ifndef __APPLE__
 size_t strlcpy(char *dst, const char *src, size_t n)
@@ -115,6 +130,7 @@ esp_err_t esp_partition_read(const esp_partition_t *p, size_t at, void *out, siz
 }
 esp_err_t esp_ota_begin(const esp_partition_t *p, size_t n, esp_ota_handle_t *h)
 {
+    assert(relay_reserved); /* Relay TLS buffers must be gone before flash allocation. */
     assert(p->index != running_slot);
     assert(n <= p->size);
     write_at = 0;
@@ -285,6 +301,13 @@ int main(void)
     healthy();
     assert(ota_begin(ENTRANCE_SLOT_BYTES + 4096, hash, NULL, ticket) == ESP_ERR_INVALID_SIZE);
     assert(ota_begin(8193, hash, NULL, ticket) == ESP_ERR_INVALID_SIZE);
+    relay_can_quiesce = false;
+    assert(ota_begin(sizeof(candidate), hash, NULL, ticket) == ESP_ERR_TIMEOUT);
+    assert(!ota_busy() && writes == 0 && !relay_reserved);
+    relay_can_quiesce = true;
+    checking_release = true;
+    assert(ota_begin(sizeof(candidate), hash, NULL, ticket) == ESP_ERR_INVALID_STATE);
+    checking_release = false;
     begin(ticket);
     assert(ota_begin(sizeof(candidate), hash, NULL, second) == ESP_ERR_INVALID_STATE);
     assert(ota_write(1, candidate, 512) == ESP_ERR_INVALID_STATE);

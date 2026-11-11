@@ -1,3 +1,5 @@
+> Historical Mario implementation. The current built-in animation is [Neko wave](neko.md); the former asset and capture fixtures are retained for reproducibility.
+
 # Built-in scene replay
 
 The device plays a recorded sequence from the original NES Super Mario Bros.

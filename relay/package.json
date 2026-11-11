@@ -1,0 +1,15 @@
+{
+  "name": "203-arcade-relay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --import ./tests/register.mjs --test tests/*.test.mjs",
+    "check": "node --check src/worker.mjs",
+    "dev": "wrangler dev --local --port 8788",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.160.1"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "203-arcade-relay",
+  "main": "src/worker.mjs",
+  "account_id": "db86e4aa6e14b7fd2778c4c815b9764a",
+  "compatibility_date": "2026-05-15",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": false
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ROOM",
+        "class_name": "ArcadeRoom"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "ArcadeRoom"
+      ]
+    }
+  ],
+  "vars": {
+    "DEVICE_ID": "entrance-c7f088",
+    "ALLOWED_ORIGINS": "https://203.at.achyuth.dev,https://room-203-arcade.sid381788.chatgpt.site",
+    "DEVICE_PUBLIC_KEY": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE/Z4kg40nfjYTBW54Y/pivy09FHfi\nruvh62ZVPm9rGcZ0LubXXEtD4Sl22Sd7vAE3n3t1mS1rjIOU+zr/cnTFuw==\n-----END PUBLIC KEY-----\n"
+  }
+}

@@ -25,6 +25,10 @@ The bitmap font in components/entrance/include/font8x8.h comes from Daniel
 Hepper's public-domain font8x8 collection, derived from public-domain IBM VGA
 fonts. Source: https://github.com/dhepper/font8x8/blob/master/font8x8_basic.h
 
+The public arcade website bundles Manrope, copyright 2018 The Manrope Project
+Authors, under the SIL Open Font License 1.1. Its full license is included at
+sites/arcade/public/fonts/OFL.txt. Source: https://github.com/googlefonts/manrope
+
 The optional offline replay capture tool uses libretro FCEUmm, revision
 e0f3086a8104f8fbbe49a2615b10401504a9533f, under GPL-2.0. Its read-only capture
 patch is in tools/fceumm-capture.patch. The emulator is not linked into the
@@ -33,3 +37,9 @@ ESP32 application. Source: https://github.com/libretro/libretro-fceumm
 Super Mario Bros. game artwork remains copyright Nintendo and is not covered
 by this repository's code license. No NES ROM program data is included in the
 scene-replay asset or ESP32 firmware.
+
+The Neko sprite sheet was generated using OpenAI imagegen from a visual
+reference supplied by the project owner. Generation and assembly provenance
+are in assets/neko/art-direction.md and assets/neko/provenance.json. This
+artwork is separate from the repository code license; no third-party artwork
+license is asserted by this notice.

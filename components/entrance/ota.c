@@ -1,4 +1,5 @@
 #include "entrance.h"
+#include "relay.h"
 #include "esp_app_desc.h"
 #include "esp_app_format.h"
 #include "esp_timer.h"
@@ -125,10 +126,13 @@ esp_err_t ota_begin(size_t size, const uint8_t hash[32], const char *version, ch
 {
     xSemaphoreTake(operation_mutex, portMAX_DELAY);
     esp_err_t err = ESP_OK;
-    if (ota_busy() || !settings_healthy || !baseline_healthy)
+    bool relay_reserved = false;
+    if (ota_busy() || release_checking() || !settings_healthy || !baseline_healthy)
         err = ESP_ERR_INVALID_STATE;
     else if (size < sizeof(prefix) + 4096 || size > ENTRANCE_SLOT_BYTES || size % 4096)
         err = ESP_ERR_INVALID_SIZE;
+    else if (!(relay_reserved = relay_quiesce()))
+        err = ESP_ERR_TIMEOUT;
     else {
         destination = esp_ota_get_next_update_partition(NULL);
         if (!destination || destination == esp_ota_get_running_partition() ||
@@ -163,6 +167,8 @@ esp_err_t ota_begin(size_t size, const uint8_t hash[32], const char *version, ch
             }
         }
     }
+    if (relay_reserved)
+        relay_resume();
     xSemaphoreGive(operation_mutex);
     return err;
 }

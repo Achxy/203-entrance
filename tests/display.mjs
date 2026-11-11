@@ -6,7 +6,7 @@ import {chromium} from 'playwright';
 import '../web/media.js';
 import '../web/replay.js';
 const M=globalThis.EntranceMedia;
-const replayBytes=await readFile('assets/entrance.rpl');
+const replayBytes=await readFile('assets/neko/neko.ecl');
 const replay=new EntranceReplay.Replay(replayBytes);
 await mkdir('.local/browser',{recursive:true});
 const server=http.createServer(async(req,res)=>{
@@ -22,7 +22,7 @@ const evidence=[];
 try {
   for(const width of [1440,390,320]) {
     const context=await browser.newContext({viewport:{width,height:1000},reducedMotion:'reduce'}),page=await context.newPage();
-    const errors=[],requests=[];let saved=null,failReply=true,mode='replay',puts=0,csrfChecked=0,replayFrame=180;
+    const errors=[],requests=[];let saved=null,failReply=true,mode='replay',puts=0,csrfChecked=0,replayFrame=3;
     page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>requests.push(r.url()));
     const display=()=>{
       const c=saved?M.decode(saved):null;
@@ -30,7 +30,7 @@ try {
         capacity:12288,size:saved?.length||0,sha256:saved?createHash('sha256').update(saved).digest('hex'):'',title:c?.title||'',
         clip_width:c?.width||0,clip_height:c?.height||0,fps:c?.fps||0,frames:c?.frames.length||0,frame:0,loops:2,error:'',
         replay:{active:mode.startsWith('replay'),bytes:replayBytes.length,frame:replayFrame,frames:replay.frames,
-          period_us:replay.period*1000,chapters:replay.chapters.length,world:1,level:1,loops:2,caption:EntranceReplay.messages[0],caption_index:0}};
+          period_us:replay.period*1000,chapters:1,title:replay.title,width:replay.width,height:replay.height,loops:2,caption:EntranceReplay.messages[0],caption_index:0}};
     };
     await page.route(`${origin}/api/v1/**`,async route=>{
       const req=route.request(),url=new URL(req.url()),path=url.pathname.replace('/api/v1','');let body={ok:true};

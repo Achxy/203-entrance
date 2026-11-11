@@ -19,3 +19,13 @@ __pycache__/
 *.map
 !tests/fixtures/*.bin
 !keys/release-public.pem
+
+# Reproducible animation previews and frame audit exports
+output/neko/
+
+# Public site build state and local-only arcade qualification
+sites/arcade/.env*
+!sites/arcade/.env.example
+sites/arcade/.dev.vars
+sites/arcade/.wrangler/
+sites/arcade/.clerk/

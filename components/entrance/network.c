@@ -1,4 +1,6 @@
 #include "entrance.h"
+#include "arcade.h"
+#include "relay.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_netif.h"
@@ -69,11 +71,11 @@ esp_err_t net_apply(void)
         return ESP_ERR_INVALID_STATE;
     xSemaphoreTake(network_mutex, portMAX_DELAY);
     settings_t snapshot = settings_snapshot();
-    station_enabled = snapshot.enabled;
+    station_enabled = snapshot.enabled && (!arcade_guest_network() || relay_enabled());
     esp_timer_stop(reconnect_timer);
     online = false;
     esp_wifi_disconnect();
-    if (!snapshot.enabled || maintenance) {
+    if (!station_enabled || maintenance) {
         xSemaphoreGive(network_mutex);
         return ESP_OK;
     }
@@ -81,6 +83,11 @@ esp_err_t net_apply(void)
     memcpy(config.sta.ssid, snapshot.ssid, strlen(snapshot.ssid));
     strlcpy((char *)config.sta.password, snapshot.password, sizeof(config.sta.password));
     config.sta.threshold.authmode = *snapshot.password ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+    /* Campus SSIDs have several BSSIDs. Scan all channels and try alternatives
+       instead of repeatedly selecting the first access point that answers. */
+    config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+    config.sta.failure_retry_cnt = 2;
     config.sta.pmf_cfg.capable = true;
     esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &config);
     if (err == ESP_OK)
@@ -118,11 +125,13 @@ esp_err_t net_init(void)
     if ((err = esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, event, NULL)) != ESP_OK)
         return err;
     wifi_config_t ap = {0};
-    strlcpy((char *)ap.ap.ssid, identity.ssid, sizeof(ap.ap.ssid));
-    ap.ap.ssid_len = strlen(identity.ssid);
-    strlcpy((char *)ap.ap.password, identity.ap_password, sizeof(ap.ap.password));
+    const char *ssid = arcade_guest_network() ? ARCADE_GUEST_SSID : identity.ssid;
+    const char *password = arcade_guest_network() ? ARCADE_GUEST_PASSWORD : identity.ap_password;
+    strlcpy((char *)ap.ap.ssid, ssid, sizeof(ap.ap.ssid));
+    ap.ap.ssid_len = strlen(ssid);
+    strlcpy((char *)ap.ap.password, password, sizeof(ap.ap.password));
     ap.ap.channel = 1;
-    ap.ap.max_connection = 2;
+    ap.ap.max_connection = 4;
     ap.ap.authmode = WIFI_AUTH_WPA2_PSK;
     ap.ap.pmf_cfg.capable = true;
     if ((err = esp_wifi_set_mode(WIFI_MODE_APSTA)) != ESP_OK)
@@ -153,10 +162,30 @@ bool net_ready(void)
 {
     return ready;
 }
+esp_err_t net_refresh_ap(void)
+{
+    if (!network_mutex)
+        return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(network_mutex, portMAX_DELAY);
+    wifi_config_t ap = {0};
+    esp_err_t err = esp_wifi_get_config(WIFI_IF_AP, &ap);
+    if (err == ESP_OK) {
+        const char *ssid = arcade_guest_network() ? ARCADE_GUEST_SSID : identity.ssid;
+        const char *password =
+            arcade_guest_network() ? ARCADE_GUEST_PASSWORD : identity.ap_password;
+        strlcpy((char *)ap.ap.ssid, ssid, sizeof(ap.ap.ssid));
+        ap.ap.ssid_len = strlen(ssid);
+        strlcpy((char *)ap.ap.password, password, sizeof(ap.ap.password));
+        err = esp_wifi_set_config(WIFI_IF_AP, &ap);
+    }
+    xSemaphoreGive(network_mutex);
+    return err == ESP_OK ? net_apply() : err;
+}
 void net_maintenance(void)
 {
     maintenance = true;
-    net_apply();
+    arcade_maintenance();
+    net_refresh_ap();
     diag_event("Maintenance mode: uplink disabled until reboot; hotspot retained");
 }
 cJSON *net_status(void)
@@ -167,11 +196,13 @@ cJSON *net_status(void)
     strlcpy(address, station_ip, sizeof(address));
     portEXIT_CRITICAL(&ip_mutex);
     cJSON *j = cJSON_CreateObject();
-    cJSON_AddStringToObject(j, "ap_ssid", identity.ssid);
+    cJSON_AddStringToObject(j, "ap_ssid",
+                            arcade_guest_network() ? ARCADE_GUEST_SSID : identity.ssid);
     cJSON_AddStringToObject(j, "ap_ip", "192.168.4.1");
     cJSON_AddStringToObject(j, "station_ip", address);
     cJSON_AddStringToObject(j, "station_ssid", snapshot.ssid);
     cJSON_AddBoolToObject(j, "enabled", snapshot.enabled);
+    cJSON_AddBoolToObject(j, "paused_for_arcade", arcade_guest_network() && !relay_enabled());
     cJSON_AddNumberToObject(j, "settings_generation", snapshot.generation);
     cJSON_AddNumberToObject(j, "settings_schema", snapshot.schema);
     cJSON_AddBoolToObject(j, "online", online);
@@ -180,15 +211,20 @@ cJSON *net_status(void)
     cJSON_AddNumberToObject(j, "unix_time", time(NULL));
     cJSON_AddBoolToObject(j, "time_valid", time(NULL) >= 1700000000);
     const char *status = !snapshot.enabled ? "Uplink disabled"
-                         : maintenance     ? "Disabled in maintenance mode"
-                         : online          ? "Connected"
-                                           : "Connecting; local hotspot remains available";
-    if (snapshot.enabled && !online && !maintenance) {
+                         : (arcade_guest_network() && !relay_enabled())
+                             ? "Uplink paused for local arcade play"
+                         : maintenance ? "Disabled in maintenance mode"
+                         : online      ? "Connected"
+                                       : "Connecting; local hotspot remains available";
+    if (snapshot.enabled && !online && !maintenance &&
+        (!arcade_guest_network() || relay_enabled())) {
         if (disconnect_reason == WIFI_REASON_NO_AP_FOUND)
             status = "Network not found; check its name and 2.4 GHz band";
         if (disconnect_reason == WIFI_REASON_AUTH_FAIL ||
             disconnect_reason == WIFI_REASON_HANDSHAKE_TIMEOUT)
             status = "Authentication failed; verify the uplink password";
+        if (disconnect_reason == WIFI_REASON_AUTH_EXPIRE)
+            status = "Access point did not complete Wi-Fi authentication; trying alternatives";
         if (disconnect_reason == WIFI_REASON_BEACON_TIMEOUT)
             status = "Uplink signal lost; reconnecting";
     }

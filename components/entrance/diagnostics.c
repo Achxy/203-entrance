@@ -125,3 +125,68 @@ cJSON *diag_status(void)
     cJSON_AddItemToObject(j, "display", display_status());
     return j;
 }
+
+/* Minute snapshots live in RAM: a reset necessarily starts a new evidence window.
+   No wear on flash, no credentials, and no dependency on an Internet-connected client. */
+static struct {
+    uint32_t uptime_s, free_heap, largest_block, settings_generation;
+    bool healthy;
+} health_samples[64];
+static uint32_t health_sample_count, unhealthy_observations;
+static uint64_t next_health_sample_ms = 60000;
+void diag_health_sample(bool healthy)
+{
+    uint64_t now = esp_timer_get_time() / 1000;
+    if (now < 60000 || ota_trial())
+        return;
+    portENTER_CRITICAL(&log_mux);
+    if (!healthy)
+        unhealthy_observations++;
+    bool due = now >= next_health_sample_ms;
+    if (due)
+        next_health_sample_ms = now + 60000;
+    portEXIT_CRITICAL(&log_mux);
+    if (!due)
+        return;
+    settings_t settings = settings_snapshot();
+    uint32_t free_heap = esp_get_free_heap_size();
+    uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    portENTER_CRITICAL(&log_mux);
+    unsigned i = health_sample_count++ % 64;
+    health_samples[i].uptime_s = now / 1000;
+    health_samples[i].free_heap = free_heap;
+    health_samples[i].largest_block = largest;
+    health_samples[i].settings_generation = settings.generation;
+    health_samples[i].healthy = healthy;
+    portEXIT_CRITICAL(&log_mux);
+    memset(&settings, 0, sizeof(settings));
+}
+cJSON *diag_soak(void)
+{
+    cJSON *j = cJSON_CreateObject(), *rows = cJSON_AddArrayToObject(j, "samples");
+    portENTER_CRITICAL(&log_mux);
+    uint32_t end = health_sample_count, unhealthy = unhealthy_observations;
+    portEXIT_CRITICAL(&log_mux);
+    cJSON_AddNumberToObject(j, "unhealthy_observations", unhealthy);
+    cJSON_AddNumberToObject(j, "sample_period_s", 60);
+    for (uint32_t n = end > 64 ? end - 64 : 0; n < end; n++) {
+        uint32_t uptime, free_heap, largest, generation;
+        bool healthy;
+        portENTER_CRITICAL(&log_mux);
+        unsigned i = n % 64;
+        uptime = health_samples[i].uptime_s;
+        free_heap = health_samples[i].free_heap;
+        largest = health_samples[i].largest_block;
+        generation = health_samples[i].settings_generation;
+        healthy = health_samples[i].healthy;
+        portEXIT_CRITICAL(&log_mux);
+        cJSON *row = cJSON_CreateObject();
+        cJSON_AddNumberToObject(row, "uptime_s", uptime);
+        cJSON_AddNumberToObject(row, "free_heap", free_heap);
+        cJSON_AddNumberToObject(row, "largest_block", largest);
+        cJSON_AddNumberToObject(row, "settings_generation", generation);
+        cJSON_AddBoolToObject(row, "healthy", healthy);
+        cJSON_AddItemToArray(rows, row);
+    }
+    return j;
+}

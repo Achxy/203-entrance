@@ -1,4 +1,6 @@
 #include "entrance.h"
+#include "relay.h"
+#include "arcade.h"
 #include "protocol.h"
 #include "esp_app_desc.h"
 #include "esp_http_client.h"
@@ -20,7 +22,12 @@ typedef struct {
 } release_t;
 static release_t available;
 static _Atomic(SemaphoreHandle_t) release_mutex;
-static bool checking, check_requested, install_requested, installing;
+static _Atomic bool checking;
+static bool check_requested, install_requested, installing;
+bool release_checking(void)
+{
+    return checking;
+}
 static char release_message[128] = "Offline: connect an optional Wi-Fi uplink to check GitHub";
 static int64_t next_check;
 static char requested_version[32];
@@ -233,15 +240,23 @@ static void worker(void *unused)
     for (;;) {
         xSemaphoreTake(release_mutex, portMAX_DELAY);
         bool install = install_requested;
-        bool check =
-            check_requested || (net_online() && esp_timer_get_time() >= next_check && !ota_busy());
+        bool check = check_requested || (net_online() && esp_timer_get_time() >= next_check &&
+                                         !ota_busy() && !arcade_display_active());
         release_t release = available;
         char version[32];
         strlcpy(version, requested_version, sizeof(version));
         requested_version[0] = 0;
         install_requested = check_requested = false;
-        if (check && !install)
-            checking = true;
+        if (check && !install) {
+            xSemaphoreTake(operation_mutex, portMAX_DELAY);
+            if (ota_busy()) {
+                check = false;
+                check_requested = true;
+                strlcpy(requested_version, version, sizeof(requested_version));
+            } else
+                checking = true;
+            xSemaphoreGive(operation_mutex);
+        }
         xSemaphoreGive(release_mutex);
         if (install) {
             esp_err_t err = download_image(&release);
@@ -257,7 +272,10 @@ static void worker(void *unused)
             xSemaphoreGive(release_mutex);
         } else if (check) {
             release_t candidate = {0};
-            esp_err_t err = fetch_release(&candidate, version);
+            bool reserved = relay_quiesce();
+            esp_err_t err = reserved ? fetch_release(&candidate, version) : ESP_ERR_TIMEOUT;
+            if (reserved)
+                relay_resume();
             xSemaphoreTake(release_mutex, portMAX_DELAY);
             checking = false;
             if (err == ESP_OK) {

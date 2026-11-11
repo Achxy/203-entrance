@@ -1,8 +1,7 @@
 #include "display.h"
-#include "replay.h"
+#include "arcade.h"
+#include "builtin_loop.h"
 #include "captions.h"
-#define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
-#include "miniz.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_heap_caps.h"
@@ -30,8 +29,7 @@ static union {
         uint8_t media[MEDIA_MAX_BYTES], pixels[MEDIA_MAX_PIXELS / 2];
     } clip;
     struct {
-        replay_t player;
-        tinfl_decompressor inflater;
+        builtin_loop_t player;
     } builtin;
 } buffers;
 #define media buffers.clip.media
@@ -39,8 +37,8 @@ static union {
 #define movie buffers.builtin.player
 static bool replay_loaded;
 static unsigned caption_index;
-extern const uint8_t replay_asset_start[] asm("_binary_entrance_rpl_start");
-extern const uint8_t replay_asset_end[] asm("_binary_entrance_rpl_end");
+extern const uint8_t replay_asset_start[] asm("_binary_neko_ecl_start");
+extern const uint8_t replay_asset_end[] asm("_binary_neko_ecl_end");
 static uint8_t *strip;
 static size_t media_size, frame_offset = MEDIA_HEADER_BYTES;
 static media_info_t info;
@@ -58,21 +56,9 @@ static bool replay_mode(unsigned mode)
 {
     return mode == MODE_REPLAY || mode == MODE_REPLAY_PAUSE;
 }
-static bool inflate_block(const uint8_t *source, size_t size, uint8_t *out, size_t expected,
-                          void *context)
-{
-    tinfl_decompressor *decoder = context;
-    size_t input = size, output = expected;
-    tinfl_init(decoder);
-    tinfl_status status =
-        tinfl_decompress(decoder, source, &input, out, out, &output,
-                         TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
-    return status == TINFL_STATUS_DONE && input == size && output == expected;
-}
 static bool open_replay(void)
 {
-    replay_loaded = replay_open(&movie, replay_asset_start, replay_asset_end - replay_asset_start,
-                                inflate_block, &buffers.builtin.inflater);
+    replay_loaded = builtin_loop_open(&movie, replay_asset_start, replay_asset_end - replay_asset_start);
     return replay_loaded;
 }
 const uint8_t *display_replay_asset(size_t *size)
@@ -84,9 +70,11 @@ static esp_err_t send_bytes(bool data, const void *bytes, size_t length)
 {
     gpio_set_level(1, data);
     spi_transaction_t t = {.length = length * 8, .tx_buffer = bytes};
-    /* Bounded polling avoids a queue/interrupt round trip for every tiny LCD
-       command. Higher-priority management and health tasks can preempt it. */
-    return spi_device_polling_transmit(spi, &t);
+    /* Poll only tiny commands. A complete frame spends about 41 ms on the
+       8 MHz wire; spinning through its pixel strips starves the idle-priority
+       HTTPS/password worker. DMA completion lets that worker and IDLE run
+       while the display task waits, without changing the panel timing. */
+    return length > 32 ? spi_device_transmit(spi, &t) : spi_device_polling_transmit(spi, &t);
 }
 static esp_err_t command(uint8_t code, const uint8_t *data, size_t length)
 {
@@ -171,17 +159,10 @@ static esp_err_t draw(void)
             return err;
         panel_dirty = false;
     }
+    bool game_frame = arcade_frame_begin();
     bool builtin = replay_mode(config.mode) && replay_loaded;
-    unsigned header = builtin ? (h == 160 ? CAPTION_HEADER_PORTRAIT : CAPTION_HEADER_LANDSCAPE) : 0;
-    unsigned divider = builtin ? 1 : 0;
-    unsigned dw = w, dh = h - header - divider;
+    unsigned dw = w, dh = h;
     bool clip = media_size && (config.mode == MODE_PLAY || config.mode == MODE_PAUSE);
-    if (builtin) {
-        if (w * 240 > dh * 256)
-            dw = dh * 256 / 240;
-        else
-            dh = w * 240 / 256;
-    }
     if (clip) {
         if (w * info.height > h * info.width)
             dw = h * info.width / info.height;
@@ -192,33 +173,20 @@ static esp_err_t draw(void)
         if (!dh)
             dh = 1;
     }
-    unsigned left = (w - dw) / 2, top = header + divider + (h - header - divider - dh) / 2;
-    uint8_t scanline[256];
+    unsigned left = (w - dw) / 2, top = (h - dh) / 2;
     uint16_t caption[160];
     for (unsigned y = 0; y < h; y += 4) {
         for (unsigned row = 0; row < 4; row++) {
             unsigned py = y + row;
-            if (builtin && py < header)
-                caption_row(caption_index, w, header, py, caption);
-            else if (builtin && py >= top && py < top + dh)
-                replay_scene_row(movie.scene, movie.tiles, (py - top) * 240 / dh, scanline);
+            if (game_frame) arcade_frame_row(w, h, py, caption);
+            if (!game_frame && builtin && !builtin_loop_row(&movie, w, h, py, caption_index, caption))
+                return ESP_ERR_INVALID_SIZE;
+            bool pairing = arcade_pair_row(py, caption, w);
             for (unsigned x = 0; x < w; x++) {
                 uint16_t color = 0;
-                if (builtin && py < header)
+                if (game_frame || builtin || pairing)
                     color = caption[x];
-                else if (builtin && py == header)
-                    color = 0xffe0;
-                else if (builtin && x >= left && x < left + dw && py >= top && py < top + dh) {
-                    color = replay_color(&movie, scanline[(x - left) * 256 / dw]);
-                    /* Both ends meet at black; the captions keep their own clock. */
-                    unsigned fade = movie.frame < 8 ? movie.frame
-                                    : movie.frames - 1 - movie.frame < 8
-                                        ? movie.frames - 1 - movie.frame
-                                        : 8;
-                    if (fade < 8)
-                        color = (((color >> 11) * fade / 8) << 11) |
-                                ((((color >> 5) & 63) * fade / 8) << 5) | ((color & 31) * fade / 8);
-                } else if (config.mode == MODE_TEST)
+                else if (config.mode == MODE_TEST)
                     color = test_color(x, py, w, h);
                 else if (clip && x >= left && x < left + dw && py >= top && py < top + dh) {
                     unsigned sx = (x - left) * info.width / dw;
@@ -236,8 +204,8 @@ static esp_err_t draw(void)
             err = send_bytes(true, strip, w * 4 * 2);
         if (err != ESP_OK)
             return err;
-        /* The bounded frame finishes before the task sleeps. A scheduler
-           quantum per strip would dominate the 40 ms total wire transfer. */
+        /* Pixel DMA already releases the CPU until completion. No additional
+           scheduler tick is needed between strips. */
     }
     rendered++;
     last_frame_us = (uint32_t)(esp_timer_get_time() - started);
@@ -262,7 +230,7 @@ static void display_task(void *arg)
 {
     (void)arg;
     int64_t next = 0;
-    bool was_suspended = false;
+    bool was_suspended = false, was_game = false;
     for (;;) {
         heartbeat_ms = (uint32_t)(esp_timer_get_time() / 1000);
         bool suspended = ota_busy() && !ota_trial();
@@ -270,9 +238,12 @@ static void display_task(void *arg)
             xSemaphoreTake(mutex, portMAX_DELAY);
             int64_t now = esp_timer_get_time();
             bool builtin = replay_mode(config.mode) && replay_loaded;
-            bool playing = builtin ? config.mode == MODE_REPLAY
-                                   : config.mode == MODE_PLAY && media_size && info.frames > 1;
-            int64_t period = builtin ? movie.period_us : media_size ? 1000000 / info.fps : 100000;
+            bool game_active = arcade_display_active();
+            if (game_active != was_game) dirty = true;
+            was_game = game_active;
+            bool playing = game_active || (builtin ? config.mode == MODE_REPLAY
+                                   : config.mode == MODE_PLAY && media_size && info.frames > 1);
+            int64_t period = game_active ? 50000 : builtin ? movie.period_us : media_size ? 1000000 / info.fps : 100000;
             if (was_suspended || !next || dirty)
                 next = now + period;
             unsigned caption_now = (unsigned)((uint64_t)now / (CAPTION_PERIOD_MS * 1000ULL) % 3);
@@ -280,8 +251,10 @@ static void display_task(void *arg)
             caption_index = caption_now;
             bool advance = playing && now >= next;
             if (advance) {
-                if (builtin) {
-                    if (!replay_next(&movie))
+                if (game_active) {
+                    /* Game simulation owns its fixed-step clock. */
+                } else if (builtin) {
+                    if (!builtin_loop_next(&movie))
                         driver_ready = false;
                 } else if (++frame == info.frames) {
                     loops++;
@@ -526,7 +499,7 @@ esp_err_t display_configure(const cJSON *request)
             return end_change(ESP_ERR_INVALID_ARG);
         }
     }
-    if (chapter >= 0 && (!replay_mode(next.mode) || chapter >= replay_asset_start[28]))
+    if (chapter >= 0 && (!replay_mode(next.mode) || chapter != 0))
         return end_change(ESP_ERR_INVALID_ARG);
     next.crc = record_crc(&next, offsetof(display_config_t, crc));
     if (chapter < 0 && !memcmp(&next, &config, sizeof(config)))
@@ -565,7 +538,7 @@ esp_err_t display_configure(const cJSON *request)
                 memcpy(media, saved_clip, media_size);
             reset_frame();
         }
-        if (chapter >= 0 && !replay_seek(&movie, replay_chapter_frame(&movie, chapter))) {
+        if (chapter >= 0 && !builtin_loop_seek(&movie, 0)) {
             driver_ready = false;
             free(saved_clip);
             return end_change(ESP_ERR_INVALID_CRC);
@@ -635,17 +608,14 @@ cJSON *display_status(void)
     cJSON_AddBoolToObject(replay, "active", replay_loaded && replay_mode(config.mode));
     cJSON_AddNumberToObject(replay, "bytes", replay_asset_end - replay_asset_start);
     cJSON_AddNumberToObject(replay, "frame", replay_loaded ? movie.frame : 0);
-    cJSON_AddNumberToObject(
-        replay, "frames",
-        (uint32_t)replay_asset_start[16] | (uint32_t)replay_asset_start[17] << 8 |
-            (uint32_t)replay_asset_start[18] << 16 | (uint32_t)replay_asset_start[19] << 24);
-    cJSON_AddNumberToObject(
-        replay, "period_us",
-        (uint32_t)replay_asset_start[20] | (uint32_t)replay_asset_start[21] << 8 |
-            (uint32_t)replay_asset_start[22] << 16 | (uint32_t)replay_asset_start[23] << 24);
-    cJSON_AddNumberToObject(replay, "chapters", replay_asset_start[28]);
-    cJSON_AddNumberToObject(replay, "world", replay_loaded ? movie.scene[2405] + 1 : 1);
-    cJSON_AddNumberToObject(replay, "level", replay_loaded ? movie.scene[2406] + 1 : 1);
+    cJSON_AddStringToObject(replay, "format", "ECL1");
+    cJSON_AddStringToObject(replay, "title", "Neko wave");
+    cJSON_AddNumberToObject(replay, "width", replay_asset_start[12]);
+    cJSON_AddNumberToObject(replay, "height", replay_asset_start[13]);
+    cJSON_AddNumberToObject(replay, "frames", replay_asset_start[16] | (uint16_t)replay_asset_start[17] << 8);
+    cJSON_AddNumberToObject(replay, "period_us", 1000000 / replay_asset_start[14]);
+    /* Keep the v1 restart selector compatible with older clients. */
+    cJSON_AddNumberToObject(replay, "chapters", 1);
     cJSON_AddNumberToObject(replay, "loops", replay_loaded ? movie.loops : 0);
     cJSON_AddStringToObject(replay, "caption", caption_text(caption_index));
     cJSON_AddNumberToObject(replay, "caption_index", caption_index);

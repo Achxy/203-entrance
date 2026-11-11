@@ -719,7 +719,7 @@ def cmd_audit(args):
     for option in ("SECURE_SIGNED_APPS_NO_SECURE_BOOT", "SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT",
                    "SECURE_SIGNED_APPS_RSA_SCHEME", "BOOTLOADER_APP_ROLLBACK_ENABLE",
                    "ESP_COREDUMP_ENABLE_TO_FLASH", "ESPTOOLPY_FLASHSIZE_4MB",
-                   "ESP_TASK_WDT_EN", "ESP_TASK_WDT_INIT", "ESP_TASK_WDT_PANIC"):
+                   "ESP_TASK_WDT_EN", "ESP_TASK_WDT_INIT", "ESP_TASK_WDT_PANIC", "MBEDTLS_DYNAMIC_BUFFER"):
         if configuration.get(option) is not True:
             raise ValueError(f"Required firmware policy missing: {option}")
     if configuration.get("CJSON_NESTING_LIMIT") != 8:
@@ -820,6 +820,31 @@ def cmd_display(args):
     print(json.dumps(device.request("GET", "/api/v1/display"), indent=2))
 
 
+def cmd_arcade(args):
+    device = Device(args.host)
+    device.login()
+    path = "/api/v1/arcade"
+    if args.action != "status":
+        path += "/" + args.action
+    method = "POST" if args.action == "release" else "GET"
+    print(json.dumps(device.request(method, path), indent=2))
+
+
+def cmd_relay(args):
+    device = Device(args.host)
+    device.login()
+    path = "/api/v1/arcade/relay"
+    current = device.request("GET", path)
+    if args.enabled is not None or args.relay_host is not None:
+        host = args.relay_host if args.relay_host is not None else current["host"]
+        enabled = args.enabled if args.enabled is not None else current["enabled"]
+        if enabled and not host:
+            raise ValueError("Enabling the relay requires --relay-host with its HTTPS hostname")
+        device.request("PUT", path, {"host": host, "enabled": enabled})
+        current = device.request("GET", path)
+    print(json.dumps(current, indent=2))
+
+
 def cmd_media(args):
     from media import inspect_clip
     path = Path(args.file) if args.file else None
@@ -866,15 +891,16 @@ def main():
                 "status": cmd_status, "upload": cmd_upload, "network": cmd_network, "check": cmd_check,
                 "install": cmd_install, "rollback": cmd_rollback, "diagnostics": cmd_diagnostics,
                 "sign": cmd_sign, "release": cmd_release, "monitor": cmd_monitor, "soak": cmd_soak,
-                "display": cmd_display, "media": cmd_media, "usb-install": cmd_usb_install}
+                "display": cmd_display, "media": cmd_media, "usb-install": cmd_usb_install,
+                "arcade": cmd_arcade, "relay": cmd_relay}
     for name, handler in handlers.items():
         p = sub.add_parser(name)
         p.set_defaults(handler=handler)
         if name in {"backup", "provision", "flash", "monitor", "soak", "usb-install"}:
             p.add_argument("--port")
-        if name in {"status", "upload", "network", "check", "install", "rollback", "diagnostics", "soak", "display", "media"}:
+        if name in {"status", "upload", "network", "check", "install", "rollback", "diagnostics", "soak", "display", "media", "arcade", "relay"}:
             p.add_argument("--host")
-        if name in {"provision", "flash", "usb-install", "status", "upload", "network", "check", "install", "rollback", "diagnostics", "soak", "display", "media"}:
+        if name in {"provision", "flash", "usb-install", "status", "upload", "network", "check", "install", "rollback", "diagnostics", "soak", "display", "media", "arcade", "relay"}:
             p.add_argument("--device-profile", type=Path, help="Private identity/credentials file for a particular board; default is .local/device.json")
         if name == "build":
             p.add_argument("--version", default="0.1.0")
@@ -890,9 +916,17 @@ def main():
         if name == "display":
             p.add_argument("--mode", choices=["play", "pause", "blank", "test", "replay", "replay_pause"])
             p.add_argument("--profile", choices=["red", "green", "black"])
-            p.add_argument("--replay-chapter", type=int, choices=range(32), help="Jump to a zero-based built-in replay level without resetting captions")
+            p.add_argument("--replay-chapter", type=int, choices=[0], help="Restart the built-in loop without resetting captions")
             p.add_argument("--rotation", type=int, choices=range(4))
             p.add_argument("--inverted", action=argparse.BooleanOptionalAction, default=None)
+        if name == "arcade":
+            p.add_argument("action", choices=["status", "release", "pairing", "visits"], default="status", nargs="?")
+        if name == "relay":
+            p.add_argument("--relay-host", help="Relay hostname only, without scheme, path or port")
+            switches = p.add_mutually_exclusive_group()
+            switches.add_argument("--enable", dest="enabled", action="store_true")
+            switches.add_argument("--disable", dest="enabled", action="store_false")
+            p.set_defaults(enabled=None)
         if name == "media":
             p.add_argument("action", choices=["info", "upload", "download", "delete"])
             p.add_argument("--file")

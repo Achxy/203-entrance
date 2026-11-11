@@ -10,10 +10,10 @@ Automatic schedules and additional scene logic are deferred.
 
 The default built-in replay uses landscape orientation, a 40-pixel caption area,
 10-pixel lettering and a one-pixel yellow divider. Its three messages change
-every **two seconds**, independently of playback. The complete game frame is
+every **two seconds**, independently of playback. The Neko paw-wave animation is
 fitted below the text with its original proportions. Built-in content resides
 inside the signed application and does not consume the custom clip allowance.
-See [replay controls, compression and reproduction](replay.md).
+See [Neko artwork, controls and frame validation](neko.md).
 
 ## Wiring and panel verification
 
@@ -87,7 +87,9 @@ readback, not by blindly repeating a replacement.
 
 Custom playback uses a fixed 10,240-byte packed frame, a 12,288-byte clip buffer,
 and a 1,280-byte DMA strip. The clip buffers share a union with the bounded replay
-decoder. A task one priority above IDLE updates the panel at 8 MHz and sleeps at
+decoder. Bulk pixel transfers wait on DMA completion instead of spinning, so
+HTTPS and IDLE can run during transmission. Tiny LCD commands use bounded
+polling. A task one priority above IDLE updates the panel at 8 MHz and sleeps at
 least 10 ms between bounded frame operations. Network/health tasks can preempt it.
 Playback freezes during OTA writes. Media mutations use the same
 operation lock as firmware/network changes and are rejected while OTA is busy.

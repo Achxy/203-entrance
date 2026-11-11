@@ -63,9 +63,12 @@ void ota_schedule_reboot(void);
 esp_err_t api_start(void);
 bool api_ready(void);
 void health_start(void);
+void diag_health_sample(bool healthy);
+cJSON *diag_soak(void);
 void health_set_services(bool ready);
 
 void release_start(void);
+bool release_checking(void);
 esp_err_t release_check(const char *version);
 esp_err_t release_install(char ticket[65]);
 cJSON *release_status(void);

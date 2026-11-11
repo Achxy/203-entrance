@@ -1,5 +1,7 @@
 #include "entrance.h"
 #include "display.h"
+#include "arcade.h"
+#include "relay.h"
 #include "protocol.h"
 #include "auth.h"
 #include "esp_https_server.h"
@@ -270,6 +272,38 @@ static esp_err_t route(httpd_req_t *r)
         return error_response(r, "401 Unauthorized", "authentication",
                               "Sign in again. Sessions expire after one hour or reboot.");
 
+    if (!strcmp(uri, "/api/v1/soak") && r->method == HTTP_GET)
+        return json_response(r, diag_soak(), "200 OK");
+    if (!strcmp(uri, "/api/v1/arcade/relay") && r->method == HTTP_GET)
+        return json_response(r, relay_status(), "200 OK");
+    if (!strcmp(uri, "/api/v1/arcade/relay") && r->method == HTTP_PUT) {
+        cJSON *j = read_json(r);
+        const cJSON *host = cJSON_GetObjectItemCaseSensitive(j, "host");
+        const cJSON *enabled = cJSON_GetObjectItemCaseSensitive(j, "enabled");
+        esp_err_t err = cJSON_IsString(host) && cJSON_IsBool(enabled)
+                            ? relay_configure(host->valuestring, cJSON_IsTrue(enabled))
+                            : ESP_ERR_INVALID_ARG;
+        cJSON_Delete(j);
+        return outcome(r, err);
+    }
+    if (!strcmp(uri, "/api/v1/arcade/release") && r->method == HTTP_POST) {
+        arcade_owner_release();
+        return outcome(r, ESP_OK);
+    }
+    if (!strcmp(uri, "/api/v1/arcade") && r->method == HTTP_GET)
+        return json_response(r, arcade_status(), "200 OK");
+    if (!strcmp(uri, "/api/v1/arcade/visits") && r->method == HTTP_GET)
+        return json_response(r, arcade_logs(), "200 OK");
+    if (!strcmp(uri, "/api/v1/arcade/pairing") && r->method == HTTP_GET)
+        return json_response(r, arcade_pairing(), "200 OK");
+    if (!strcmp(uri, "/api/v1/arcade/network") && r->method == HTTP_PUT) {
+        cJSON *j = read_json(r);
+        const cJSON *v = cJSON_GetObjectItemCaseSensitive(j, "enabled");
+        esp_err_t err =
+            cJSON_IsBool(v) ? arcade_set_guest_network(cJSON_IsTrue(v)) : ESP_ERR_INVALID_ARG;
+        cJSON_Delete(j);
+        return outcome(r, err);
+    }
     if (!strcmp(uri, "/api/v1/session") && r->method == HTTP_DELETE) {
         auth_revoke(&auth_policy, session);
         httpd_resp_set_hdr(r, "Set-Cookie",
@@ -280,7 +314,9 @@ static esp_err_t route(httpd_req_t *r)
         return json_response(r, diag_status(), "200 OK");
     if (!strcmp(uri, "/api/v1/display/replay") && r->method == HTTP_GET) {
         if (ota_busy())
-            return error_response(r, "409 Conflict", "busy", "Wait for the firmware update to finish before loading the replay preview.");
+            return error_response(
+                r, "409 Conflict", "busy",
+                "Wait for the firmware update to finish before loading the replay preview.");
         size_t size;
         const uint8_t *data = display_replay_asset(&size);
         headers(r);
@@ -288,7 +324,8 @@ static esp_err_t route(httpd_req_t *r)
         for (size_t at = 0; at < size; at += 4096) {
             size_t count = size - at < 4096 ? size - at : 4096;
             esp_err_t err = httpd_resp_send_chunk(r, (const char *)data + at, count);
-            if (err != ESP_OK) return err;
+            if (err != ESP_OK)
+                return err;
             vTaskDelay(1);
         }
         return httpd_resp_send_chunk(r, NULL, 0);

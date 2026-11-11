@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import '../web/media.js';
-import '../web/replay.js';
+import './fixtures/legacy-replay.js';
 
 const bytes=await readFile('assets/entrance.rpl');
 const evidence=JSON.parse(await readFile('assets/replay-provenance.json','utf8'));
