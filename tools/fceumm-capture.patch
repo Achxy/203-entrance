@@ -1,0 +1,29 @@
+diff --git a/src/ppu.c b/src/ppu.c
+index fb78963..eeb69b0 100644
+--- a/src/ppu.c
++++ b/src/ppu.c
+@@ -58,6 +58,10 @@
+ 
+ static void FetchSpriteData(void);
+ static void FASTAPASS(1) RefreshLine(int lastpixel);
++/* Local read-only capture instrumentation; does not change emulation. */
++uint16_t entrance_trace[240][4];
++uint8_t entrance_nt[2048], entrance_oam[256], entrance_pal[32];
++
+ static void RefreshSprites(void);
+ static void CopySprites(uint8_t *target);
+ 
+@@ -389,6 +393,13 @@ static int linestartts;
+ static int tofix = 0;
+ 
+ static void ResetRL(uint8_t *target) {
++ if(scanline>=0 && scanline<240) {
++  entrance_trace[scanline][0] = ((RefreshAddr & 31)*8) + ((RefreshAddr & 0x400)?256:0) + XOffset;
++  entrance_trace[scanline][1] = ((RefreshAddr>>5)&31)*8 + ((RefreshAddr>>12)&7);
++  entrance_trace[scanline][2] = PPU[0];
++  entrance_trace[scanline][3] = PPU[1];
++  if(scanline==100) { memcpy(entrance_nt,NTARAM,2048); memcpy(entrance_oam,SPRAM,256); memcpy(entrance_pal,PALRAM,32); }
++ }
+ 	memset(target, 0xFF, 256);
+ 	if (InputScanlineHook)
+ 		InputScanlineHook(0, 0, 0, 0);

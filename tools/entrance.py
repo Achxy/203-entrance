@@ -209,6 +209,7 @@ def cmd_backup(args):
     board.update(size=len(data), sha256=hashlib.sha256(data).hexdigest())
     private_write(directory / "metadata.json", json.dumps(board, indent=2) + "\n")
     print("Verified backup saved:", directory)
+    return directory
 
 
 def create_identity(mac: str, reset=False) -> dict:
@@ -322,6 +323,104 @@ def cmd_flash(args):
          "0x9000", blank, "0x20000", binary)
     print("Initial firmware installed. Join", profile["ssid"], "and run ./entrance status.")
     print("Credentials:", PROFILE)
+
+
+def cmd_usb_install(args):
+    from usb_install import FLASH_BYTES, SLOT_OFFSETS, HealthyBoot, plan, newer, signed_image_size
+    binary = Path(args.image).resolve()
+    candidate = image_metadata(binary)
+    tool("espsecure", "verify-signature", "--version", "2", "--keyfile", PUBLIC_KEY, binary)
+    port = serial_port(args)
+    board = inspect_board(port)
+    profile = json.loads(PROFILE.read_text())
+    if profile["mac"] != board["mac"]:
+        raise ValueError("Connected board differs from the provisioned device profile")
+    directory = LOCAL / "backups" / (dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-usb-install")
+    directory.mkdir(parents=True, mode=0o700)
+    backup = directory / "flash.bin"
+    # Hold the device in its ROM loader from the backup through activation.
+    # Its firmware cannot start another update between these operations.
+    common = ("--chip", "esp32c3", "--port", port, "--baud", "460800")
+    reset_needed = True
+    try:
+        tool("esptool", *common, "--after", "no-reset", "read-flash", "0", hex(FLASH_BYTES), backup)
+        backup.chmod(0o600)
+        data = backup.read_bytes()
+        operation = plan(data, (ROOT / "build/partition_table/partition-table.bin").read_bytes())
+        active_offset = SLOT_OFFSETS[operation["active_slot"]]
+        active_slot = data[active_offset:active_offset+SLOT_BYTES]
+        active = directory / "previous-firmware.bin"
+        private_write(active, active_slot[:signed_image_size(active_slot)])
+        previous = image_metadata(active)
+        tool("espsecure", "verify-signature", "--version", "2", "--keyfile", PUBLIC_KEY, active)
+        if not newer(candidate["version"], previous["version"]):
+            raise ValueError("USB installation requires a newer version; use explicit documented recovery for a downgrade")
+        metadata = directory / "boot-selection.bin"
+        private_write(metadata, operation.pop("metadata"))
+        record = {"transport": "usb", "trial_confirmation": False, "candidate": candidate,
+                  "previous": previous, "backup_sha256": hashlib.sha256(data).hexdigest(),
+                  "board": board, **operation, "activated": False}
+        private_write(directory / "installation.json", json.dumps(record, indent=2) + "\n")
+        offset = hex(operation["application_offset"])
+        tool("esptool", *common, "--after", "no-reset", "write-flash", offset, binary)
+        tool("esptool", *common, "--after", "no-reset", "verify-flash", offset, binary)
+        # Only the alternate boot-metadata sector is replaced. A cut before this
+        # point leaves the previous application selected; its record is retained.
+        tool("esptool", *common, "--after", "no-reset", "write-flash", hex(operation["metadata_offset"]), metadata)
+        tool("esptool", *common, "--after", "hard-reset", "verify-flash", hex(operation["metadata_offset"]), metadata)
+        reset_needed = False
+    finally:
+        if reset_needed:
+            # A validation/transfer error must not strand the previous image
+            # in the ROM loader. The untouched valid boot record is retained.
+            try:
+                tool("esptool", *common, "--before", "no-reset", "--after", "hard-reset", "chip-id")
+            except Exception:
+                print("USB recovery: reconnect or press RESET to leave the ROM loader. Backup:", directory, file=sys.stderr)
+    record["activated"] = True
+    private_write(directory / "installation.json", json.dumps(record, indent=2) + "\n")
+    print("Signed USB image installed; settings and previous slot preserved.")
+    print("Backup and verification record:", directory)
+    print("USB installation does not exercise OTA trial confirmation. Checking healthy boot over USB…", flush=True)
+    from serial import Serial, SerialException
+    started = time.monotonic()
+    check = HealthyBoot(candidate["version"])
+    samples = []
+    connection = None
+    failure = "No continuous healthy boot before the USB deadline"
+    try:
+        # Native USB may disappear briefly while the new application starts.
+        while time.monotonic() - started < 30:
+            try:
+                connection = Serial(port, 115200, timeout=1)
+                break
+            except (OSError, SerialException):
+                time.sleep(0.25)
+        if connection is None:
+            raise RuntimeError("The USB serial device did not return after installation")
+        with connection:
+            while time.monotonic() - started < 120:
+                line = connection.readline().decode(errors="replace")
+                if "HEALTH " not in line:
+                    continue
+                try:
+                    row = json.loads(line.split("HEALTH ", 1)[1].strip())
+                except (ValueError, IndexError):
+                    continue
+                samples.append(row)
+                if check.observe(row):
+                    record["healthy_boot"] = True
+                    record["health_samples"] = samples
+                    private_write(directory / "installation.json", json.dumps(record, indent=2) + "\n")
+                    print("USB deployment healthy:", candidate["version"])
+                    return
+    except (ValueError, RuntimeError, OSError, SerialException) as error:
+        failure = str(error)
+    record["healthy_boot"] = False
+    record["health_samples"] = samples
+    record["health_error"] = failure
+    private_write(directory / "installation.json", json.dumps(record, indent=2) + "\n")
+    raise RuntimeError(f"USB image was written but healthy boot was not verified: {failure}. Consult {directory} and the recovery instructions")
 
 
 class APIError(RuntimeError):
@@ -691,7 +790,7 @@ def cmd_soak(args):
 def cmd_display(args):
     device = Device(args.host)
     device.login()
-    body = {key: value for key in ("mode", "profile", "rotation", "inverted")
+    body = {key: value for key in ("mode", "profile", "rotation", "inverted", "replay_chapter")
             if (value := getattr(args, key)) is not None}
     if body:
         device.request("PUT", "/api/v1/display", body)
@@ -743,11 +842,11 @@ def main():
                 "status": cmd_status, "upload": cmd_upload, "network": cmd_network, "check": cmd_check,
                 "install": cmd_install, "rollback": cmd_rollback, "diagnostics": cmd_diagnostics,
                 "sign": cmd_sign, "release": cmd_release, "monitor": cmd_monitor, "soak": cmd_soak,
-                "display": cmd_display, "media": cmd_media}
+                "display": cmd_display, "media": cmd_media, "usb-install": cmd_usb_install}
     for name, handler in handlers.items():
         p = sub.add_parser(name)
         p.set_defaults(handler=handler)
-        if name in {"backup", "provision", "flash", "monitor", "soak"}:
+        if name in {"backup", "provision", "flash", "monitor", "soak", "usb-install"}:
             p.add_argument("--port")
         if name in {"status", "upload", "network", "check", "install", "rollback", "diagnostics", "soak", "display", "media"}:
             p.add_argument("--host")
@@ -756,15 +855,16 @@ def main():
             p.add_argument("--fault", choices=["none", "startup", "watchdog", "reset", "activation", "storage"], default="none",
                            help="Qualification-only fault during trial; release tooling refuses these builds")
         if name == "provision": p.add_argument("--reset-access", action="store_true", help="Generate replacement device access credentials and certificate")
-        if name in {"upload", "sign", "release"}: p.add_argument("image")
+        if name in {"upload", "sign", "release", "usb-install"}: p.add_argument("image")
         if name == "upload": p.add_argument("--no-confirm", action="store_true", help="Hardware fault test: intentionally require rollback")
         if name == "network":
             p.add_argument("--ssid")
             p.add_argument("--disable", action="store_true")
         if name == "diagnostics": p.add_argument("--output", default=str(LOCAL / "diagnostics.json"))
         if name == "display":
-            p.add_argument("--mode", choices=["play", "pause", "blank", "test"])
+            p.add_argument("--mode", choices=["play", "pause", "blank", "test", "replay", "replay_pause"])
             p.add_argument("--profile", choices=["red", "green", "black"])
+            p.add_argument("--replay-chapter", type=int, choices=range(32), help="Jump to a zero-based built-in replay level without resetting captions")
             p.add_argument("--rotation", type=int, choices=range(4))
             p.add_argument("--inverted", action=argparse.BooleanOptionalAction, default=None)
         if name == "media":

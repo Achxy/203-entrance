@@ -10,3 +10,6 @@ esp_err_t display_remove(void);
 esp_err_t display_configure(const cJSON *request);
 /* Copy while locked; caller owns and frees the returned bytes. */
 uint8_t *display_copy(size_t *size);
+
+const uint8_t *display_replay_asset(size_t *size);
+void display_telemetry(void);

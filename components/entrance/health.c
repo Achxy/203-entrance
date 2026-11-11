@@ -51,6 +51,7 @@ static void health_task(void *arg)
                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
                      esp_reset_reason(), healthy ? "true" : "false",
                      ota_trial() ? "true" : "false");
+            display_telemetry();
         }
         if (!gpio_get_level(9)) {
             if (!pressed_at)

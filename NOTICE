@@ -20,3 +20,16 @@ products from Adafruit!
 
 Written by Limor Fried/Ladyada for Adafruit Industries.
 MIT license, all text above must be included in any redistribution.
+
+The bitmap font in components/entrance/include/font8x8.h comes from Daniel
+Hepper's public-domain font8x8 collection, derived from public-domain IBM VGA
+fonts. Source: https://github.com/dhepper/font8x8/blob/master/font8x8_basic.h
+
+The optional offline replay capture tool uses libretro FCEUmm, revision
+e0f3086a8104f8fbbe49a2615b10401504a9533f, under GPL-2.0. Its read-only capture
+patch is in tools/fceumm-capture.patch. The emulator is not linked into the
+ESP32 application. Source: https://github.com/libretro/libretro-fceumm
+
+Super Mario Bros. game artwork remains copyright Nintendo and is not covered
+by this repository's code license. No NES ROM program data is included in the
+scene-replay asset or ESP32 firmware.

@@ -12,6 +12,7 @@ A local developer console and signed OTA update system for an ESP32-C3 Super Min
 - Unique USB-provisioned administrator credentials and HTTPS identity, certificate-pinned CLI, browser sessions, CSRF protection and authentication throttling.
 - Offline dark/light console, network controls, bounded events, diagnostic export, developer CLI, native policy tests and responsive browser tests.
 - ST7735R display studio: local image/video conversion, message rendering, persistent short loops, playback controls, and panel calibration using the supplied wiring. See [display setup and storage limits](docs/display.md).
+- Built-in NES scene replay, independent two-second captions, landscape output and a yellow divider. The offline recorder verifies sampled pixels against an emulator; the ESP runs a bounded scene decoder. See [replay content and reproduction](docs/replay.md).
 - Public source in [Achxy/203-entrance](https://github.com/Achxy/203-entrance) and separate signed assets in [Achxy/203-entrance-firmware](https://github.com/Achxy/203-entrance-firmware).
 
 Hardware Secure Boot, flash encryption and eFuse anti-rollback stay disabled. Software signature verification protects the OTA path while keeping USB recovery. Physical access can read or replace flash. No entrance-device behavior is implemented yet.
@@ -53,6 +54,20 @@ To deploy a newer signed image:
 
 Keep the CLI or initiating browser tab connected through reboot. Deployment succeeds only when the expected firmware reports **confirmed healthy**. No bootloader or partition-table replacement occurs over OTA.
 
+When USB is available, a settings-preserving physical update is also supported:
+
+```sh
+./entrance usb-install build/203-entrance.bin --port /dev/cu.usbmodem101
+```
+
+This verifies both signatures and the exact partition layout, backs up all flash,
+writes the inactive application slot and alternate boot record, and checks 30
+continuous healthy seconds over serial. It requires a newer signed version.
+It retains credentials, custom clips, the previous application, bootloader and
+partition table. This trusted physical installation does not exercise the OTA
+trial-ticket protocol. USB monitoring keeps the Mac on its Internet connection;
+Bluetooth management is not implemented.
+
 ## Browser certificate enrollment
 
 USB provisioning creates a unique certificate under `.local/devices/<device>/device-cert.pem`. Compare its SHA-256 with `certificate_sha256` in the private profile:
@@ -70,7 +85,7 @@ The certificate is retained across OTA and rollback. A changed fingerprint requi
 | Command | Purpose |
 |---|---|
 | `setup`, `doctor`, `build`, `test`, `audit` | Repeatable toolchain, build and policy checks |
-| `backup`, `flash`, `provision`, `monitor` | USB installation, identity and recovery |
+| `backup`, `flash`, `usb-install`, `provision`, `monitor` | USB installation, identity and recovery |
 | `status`, `upload`, `rollback`, `diagnostics` | Local management and confirmed deployment |
 | `display`, `media` | Panel controls and verified persistent clip upload/download |
 | `network --ssid NAME`, `network --disable` | Optional uplink; password is prompted privately |

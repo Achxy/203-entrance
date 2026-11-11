@@ -4,6 +4,21 @@
 
 Before replacing firmware, `entrance flash` makes a full 4 MB backup with its SHA-256 and hardware/security information in `.local/backups/<UTC timestamp>/`. The first inspected flash is also retained locally as `.local/original-flash.bin`. Backups contain credentials or application data: do not commit or upload them.
 
+For an already provisioned board, `entrance usb-install IMAGE --port PORT` is the
+settings-preserving USB update path. It requires a newer project-signed image,
+verifies the current signed image and partition map, then writes only the inactive
+application and alternate boot-metadata sector. It retains a full backup and
+`installation.json` with image hashes, addresses and healthy-boot samples under
+`.local/backups/<timestamp>-usb-install/`. Native USB may briefly re-enumerate.
+
+The physical installer verifies 30 continuous healthy seconds and rejects a
+restart, stale telemetry, unexpected version or unhealthy services. It installs
+a trusted USB baseline rather than starting an OTA ticket trial. If that health
+check fails, the command reports failure even though the candidate may already
+be installed. Retain the backup and use explicit rollback or the full-flash USB
+restore below. A validation/transfer error attempts to release the ROM downloader;
+press RESET or reconnect if the cable disappeared during that recovery attempt.
+
 Keep an encrypted offline copy of `.local/keys/`, `.local/device.json`, `.local/devices/`, the original flash backup and the matching metadata. The profile contains the hotspot and administrator passwords and certificate pin. Copy the whole set together because the profile references its certificate and key files. Preserve the original files when moving paths; edit the private profile paths to their restored locations.
 
 A release application alone cannot recreate device credentials. Recovery artifacts and signing keys are deliberately excluded from the public repository and releases.

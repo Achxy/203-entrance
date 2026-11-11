@@ -615,3 +615,19 @@ footer {
 .slots th:last-child {
   width:24%;
 }
+
+.replay-studio { display: grid; grid-template-columns: 176px minmax(0, 1fr); gap: 28px; padding: 8px 0 28px; margin-bottom: 24px; border-bottom: 1px solid var(--line); }
+.replay-studio[hidden] { display: none; }
+.replay-preview { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+#replay-preview { width: 160px; height: 200px; background: #000; image-rendering: pixelated; border: 1px solid var(--line); }
+.replay-details h3 { margin: 4px 0 10px; font-size: 22px; }
+.replay-caption { min-height: 3em; padding-left: 12px; border-left: 2px solid var(--accent); font-weight: 600; }
+.replay-timeline { display: grid; gap: 6px; margin: 16px 0; }
+.replay-timeline progress { width: 100%; }
+.replay-chapter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 18px; }
+.replay-chapter select { width: auto; min-width: 110px; }
+.custom-content-heading { margin: 0 0 20px; }
+@media (max-width: 650px) { .replay-studio { grid-template-columns: 1fr; gap: 20px; } .replay-preview { flex-direction: row; justify-content: flex-start; gap: 18px; } #replay-preview { width: 128px; height: 160px; flex: 0 0 128px; } .replay-chapter label { flex-basis: 100%; } }
+
+#replay-preview.landscape { width: 200px; height: 160px; max-width: 100%; }
+@media(max-width:650px) { #replay-preview.landscape { width:160px; height:128px; flex-basis:160px; } }

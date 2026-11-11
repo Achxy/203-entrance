@@ -22,6 +22,8 @@ extern const uint8_t media_js_start[] asm("_binary_media_js_start");
 extern const uint8_t media_js_end[] asm("_binary_media_js_end");
 extern const uint8_t display_js_start[] asm("_binary_display_js_start");
 extern const uint8_t display_js_end[] asm("_binary_display_js_end");
+extern const uint8_t replay_js_start[] asm("_binary_replay_js_start");
+extern const uint8_t replay_js_end[] asm("_binary_replay_js_end");
 
 static void headers(httpd_req_t *r)
 {
@@ -190,7 +192,7 @@ static esp_err_t route(httpd_req_t *r)
     const char *uri = r->uri;
     if (r->method == HTTP_GET &&
         (!strcmp(uri, "/") || !strcmp(uri, "/app.js") || !strcmp(uri, "/style.css") ||
-         !strcmp(uri, "/media.js") || !strcmp(uri, "/display.js"))) {
+         !strcmp(uri, "/media.js") || !strcmp(uri, "/display.js") || !strcmp(uri, "/replay.js"))) {
         const uint8_t *start = html_start, *end = html_end;
         const char *type = "text/html; charset=utf-8";
         if (!strcmp(uri, "/app.js")) {
@@ -211,6 +213,11 @@ static esp_err_t route(httpd_req_t *r)
         if (!strcmp(uri, "/display.js")) {
             start = display_js_start;
             end = display_js_end;
+            type = "text/javascript; charset=utf-8";
+        }
+        if (!strcmp(uri, "/replay.js")) {
+            start = replay_js_start;
+            end = replay_js_end;
             type = "text/javascript; charset=utf-8";
         }
         headers(r);
@@ -271,6 +278,21 @@ static esp_err_t route(httpd_req_t *r)
     }
     if (!strcmp(uri, "/api/v1/status") && r->method == HTTP_GET)
         return json_response(r, diag_status(), "200 OK");
+    if (!strcmp(uri, "/api/v1/display/replay") && r->method == HTTP_GET) {
+        if (ota_busy())
+            return error_response(r, "409 Conflict", "busy", "Wait for the firmware update to finish before loading the replay preview.");
+        size_t size;
+        const uint8_t *data = display_replay_asset(&size);
+        headers(r);
+        httpd_resp_set_type(r, "application/octet-stream");
+        for (size_t at = 0; at < size; at += 4096) {
+            size_t count = size - at < 4096 ? size - at : 4096;
+            esp_err_t err = httpd_resp_send_chunk(r, (const char *)data + at, count);
+            if (err != ESP_OK) return err;
+            vTaskDelay(1);
+        }
+        return httpd_resp_send_chunk(r, NULL, 0);
+    }
     if (!strcmp(uri, "/api/v1/display") && r->method == HTTP_GET)
         return json_response(r, display_status(), "200 OK");
     if (!strcmp(uri, "/api/v1/display") && r->method == HTTP_PUT) {

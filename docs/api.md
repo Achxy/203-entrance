@@ -8,7 +8,8 @@ error model as firmware operations:
 | Method and path | Request / result |
 |---|---|
 | `GET /api/v1/display` | Driver, saved content hash/size, playback counters, errors, panel settings |
-| `PUT /api/v1/display` | JSON subset of `mode` (`test`, `play`, `pause`, `blank`), `profile` (`red`, `green`, `black`), `rotation` (0–3), `inverted` (boolean) |
+| `PUT /api/v1/display` | JSON subset of `mode` (`test`, `play`, `pause`, `blank`, `replay`, `replay_pause`), `profile` (`red`, `green`, `black`), `rotation` (0–3), `inverted` (boolean), `replay_chapter` (zero-based chapter index) |
+| `GET /api/v1/display/replay` | Authenticated binary RPL1 download for local preview; 409 during OTA, at most 737,280 bytes |
 | `PUT /api/v1/display/clip` | `application/octet-stream`; complete validated ECL1 clip, maximum 12,288 bytes; replaces the saved clip after validation |
 | `GET /api/v1/display/clip` | Binary ECL1 download; 404 if unavailable |
 | `DELETE /api/v1/display/clip` | Explicit removal of the saved clip; does not erase the OTA journal or credentials |
@@ -19,6 +20,13 @@ change the selected playback mode; the browser's **Save and play** performs hash
 readback and then an explicit `mode: play` request. Identical clip uploads are
 idempotent. After a lost upload response, read the saved SHA-256 before retrying.
 See [ECL1 and the electrical/storage constraints](display.md).
+
+The `display.replay` object reports `active`, asset `bytes`, `frame`, `frames`,
+`period_us`, `chapters`, current `world`/`level`, completed `loops`, `caption` and
+`caption_index`. Restart or seek by selecting `mode: replay` and a chapter.
+Pausing or seeking gameplay leaves the two-second caption clock running.
+The browser preview has its own local timeline; its controls are explicitly
+separate from device playback. See [RPL1 and capture verification](replay.md).
 
 ## Firmware and management operations
 
@@ -50,7 +58,7 @@ Browser mutations require both the session cookie and `X-CSRF-Token`. Supplied O
 
 `/ota/status` and `/ota/confirm` also accept the scoped update ticket without a session, allowing automatic reconnection after reboot. Other operations require administrator authentication. A ticket cannot start a transfer, access credentials, or modify networking. Upload chunks also require a valid session.
 
-An installation is successful only when `/ota/status` reports `phase: "confirmed"` and the expected `running_version`. Upload completion, HTTP 200, reboot, and the presence of the hotspot are not confirmation. Phases include idle, receiving, verifying, rebooting, trial, confirmed, failed, rolling_back and rolled_back. Always surface the device's `detail` text when an operation fails.
+An OTA installation is successful only when `/ota/status` reports `phase: "confirmed"` and the expected `running_version`. Upload completion, HTTP 200, reboot, and the presence of the hotspot are not confirmation. Phases include idle, receiving, verifying, rebooting, trial, confirmed, failed, rolling_back and rolled_back. A host-verified physical installation can report `usb_installed`; that is not OTA confirmation. Always surface the device's `detail` text when an operation fails.
 
 After a lost chunk reply, query the ticket's `/ota/status`. While `phase` is `receiving`, `received` equal to the chunk end acknowledges that write; `received` equal to its starting offset permits retry. Reject any other offset or phase. The supplied clients bound write attempts and status recovery to three attempts each. Restart from `/ota/start` after an aborted or timed-out transaction. Never blindly replay an uncertain mutation.
 

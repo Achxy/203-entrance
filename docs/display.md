@@ -8,6 +8,13 @@ continues after the browser closes and resumes after restart. Play, pause, blank
 panel rotation, inversion, and panel variant are saved only on explicit changes.
 Automatic schedules and additional scene logic are deferred.
 
+The default built-in replay uses landscape orientation, a 40-pixel caption area,
+10-pixel lettering and a one-pixel yellow divider. Its three messages change
+every **two seconds**, independently of playback. The complete game frame is
+fitted below the text with its original proportions. Built-in content resides
+inside the signed application and does not consume the custom clip allowance.
+See [replay controls, compression and reproduction](replay.md).
+
 ## Wiring and panel verification
 
 | Display | ESP32-C3 |
@@ -26,7 +33,8 @@ are adapted for the native ESP-IDF SPI driver; no Arduino runtime is used.
 The separate microSD pins are not wired or used. BL is permanently powered, so
 **Blank screen** renders black pixels without switching off the backlight.
 
-Open **Panel setup & test card**. Start with the red-tab profile. Verify the white
+Open **Panel setup & test card**. The attached panel uses the black-tab/RGB profile;
+the initial red-tab/BGR setting visibly swapped orange and blue. Verify the white
 perimeter, yellow upper-left and magenta upper-right corners, and red/green/blue
 bars from left to right. Green-tab changes the address offsets; black-tab changes
 RGB/BGR order. Rotation and inversion are independently adjustable. SPI is
@@ -68,9 +76,11 @@ transfers are fully received and checked before any media flash write. Identical
 retries do not rewrite flash. Browser/CLI resolve a lost save reply by hash
 readback, not by blindly repeating a replacement.
 
-Playback uses a fixed 10,240-byte packed frame, a 12,288-byte clip buffer, and a
-1,280-byte DMA strip. A low-priority task updates the panel at 8 MHz, yields
-between strips, and freezes playback during OTA. Media mutations use the same
+Custom playback uses a fixed 10,240-byte packed frame, a 12,288-byte clip buffer,
+and a 1,280-byte DMA strip. The clip buffers share a union with the bounded replay
+decoder. A task one priority above IDLE updates the panel at 8 MHz and sleeps at
+least 10 ms between bounded frame operations. Network/health tasks can preempt it.
+Playback freezes during OTA writes. Media mutations use the same
 operation lock as firmware/network changes and are rejected while OTA is busy.
 No clip data is executed as code. Older OTA-only firmware ignores this new
 namespace and can still read its original credentials and update journal.

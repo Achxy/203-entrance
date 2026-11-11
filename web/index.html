@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
   <script src="/media.js" defer></script>
+  <script src="/replay.js" defer></script>
   <script src="/display.js" defer></script>
 </head>
 <body>
@@ -37,6 +38,24 @@
       <nav class="section-nav" aria-label="Console sections"><a href="#display">Display</a><a href="#firmware">Firmware</a><a href="#network">Network</a><a href="#diagnostics">Diagnostics</a></nav>
       <section id="display" class="section">
         <div class="section-heading"><h2><span>01</span> Display studio</h2><span id="display-badge" class="badge">Reading panel</span></div>
+        <div id="replay-studio" class="replay-studio" hidden>
+          <div class="replay-preview">
+            <canvas id="replay-preview" width="128" height="160" role="img" aria-label="Local preview of the Mario replay and independent rotating captions"></canvas>
+            <button id="replay-preview-toggle" class="quiet" type="button" aria-pressed="false">Load local preview</button>
+          </div>
+          <div class="replay-details">
+            <p class="eyebrow">BUILT-IN · PLAYS WITHOUT A BROWSER</p>
+            <h3>Super Mario Bros.</h3>
+            <p class="muted">Original NES graphics and recorded, scripted gameplay. The messages change every two seconds, independently of the game.</p>
+            <p id="replay-caption" class="replay-caption">Shenanigans by the 203 dudes</p>
+            <div class="replay-timeline"><progress id="replay-progress" max="1" value="0" aria-label="Device replay progress"></progress><span id="replay-position" class="muted">Reading replay…</span></div>
+            <div class="action-row"><button id="replay-play" type="button">Play Mario</button><button id="replay-pause" class="secondary" type="button">Pause gameplay</button><button id="replay-restart" class="quiet" type="button">Restart game loop</button></div>
+            <form id="replay-chapter-form" class="replay-chapter"><label for="replay-chapter">Jump to level</label><select id="replay-chapter"></select><button type="submit" class="secondary">Go to level</button></form>
+            <p id="replay-work" class="muted" role="status">The preview runs on this browser. Device controls act on the physical panel.</p>
+            <p id="replay-spec" class="muted studio-footnote"></p>
+          </div>
+        </div>
+        <h3 class="custom-content-heading">Custom content</h3>
         <div class="display-studio">
           <div class="display-preview-column">
             <p class="eyebrow">LOCAL PREVIEW · 16 COLORS</p>

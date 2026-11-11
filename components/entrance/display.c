@@ -1,4 +1,8 @@
 #include "display.h"
+#include "replay.h"
+#include "captions.h"
+#define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
+#include "miniz.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_heap_caps.h"
@@ -9,24 +13,40 @@
 #include <string.h>
 
 /* The panel is write-only: SPI success cannot prove that pixels are visible. */
-enum { MODE_TEST, MODE_PLAY, MODE_PAUSE, MODE_BLANK };
-static const char *modes[] = {"test", "play", "pause", "blank"};
+enum { MODE_TEST, MODE_PLAY, MODE_PAUSE, MODE_BLANK, MODE_REPLAY, MODE_REPLAY_PAUSE, MODE_COUNT };
+static const char *modes[] = {"test", "play", "pause", "blank", "replay", "replay_pause"};
 static const char *profiles[] = {"red", "green", "black"};
 typedef struct {
     uint32_t magic;
     uint8_t mode, rotation, profile, inverted;
     uint32_t crc;
 } display_config_t;
-static display_config_t config = {.magic = 0x31444345};
+static display_config_t config = {.magic = 0x31444345, .rotation = 1, .profile = 2};
 static nvs_handle_t storage;
 static SemaphoreHandle_t mutex;
 static spi_device_handle_t spi;
-static uint8_t media[MEDIA_MAX_BYTES], pixels[MEDIA_MAX_PIXELS / 2];
+static union {
+    struct {
+        uint8_t media[MEDIA_MAX_BYTES], pixels[MEDIA_MAX_PIXELS / 2];
+    } clip;
+    struct {
+        replay_t player;
+        tinfl_decompressor inflater;
+    } builtin;
+} buffers;
+#define media buffers.clip.media
+#define pixels buffers.clip.pixels
+#define movie buffers.builtin.player
+static bool replay_loaded;
+static unsigned caption_index;
+extern const uint8_t replay_asset_start[] asm("_binary_entrance_rpl_start");
+extern const uint8_t replay_asset_end[] asm("_binary_entrance_rpl_end");
 static uint8_t *strip;
 static size_t media_size, frame_offset = MEDIA_HEADER_BYTES;
 static media_info_t info;
 static uint16_t frame;
 static uint32_t rendered, loops, late_frames;
+static uint32_t last_frame_us, max_frame_us;
 static bool dirty = true, panel_dirty = true;
 static bool storage_ready;
 static bool stored_clip;
@@ -34,11 +54,39 @@ static char last_error[96], media_sha[65];
 static _Atomic bool driver_ready;
 static _Atomic uint32_t heartbeat_ms;
 
+static bool replay_mode(unsigned mode)
+{
+    return mode == MODE_REPLAY || mode == MODE_REPLAY_PAUSE;
+}
+static bool inflate_block(const uint8_t *source, size_t size, uint8_t *out, size_t expected,
+                          void *context)
+{
+    tinfl_decompressor *decoder = context;
+    size_t input = size, output = expected;
+    tinfl_init(decoder);
+    tinfl_status status =
+        tinfl_decompress(decoder, source, &input, out, out, &output,
+                         TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+    return status == TINFL_STATUS_DONE && input == size && output == expected;
+}
+static bool open_replay(void)
+{
+    replay_loaded = replay_open(&movie, replay_asset_start, replay_asset_end - replay_asset_start,
+                                inflate_block, &buffers.builtin.inflater);
+    return replay_loaded;
+}
+const uint8_t *display_replay_asset(size_t *size)
+{
+    *size = replay_asset_end - replay_asset_start;
+    return replay_asset_start;
+}
 static esp_err_t send_bytes(bool data, const void *bytes, size_t length)
 {
     gpio_set_level(1, data);
     spi_transaction_t t = {.length = length * 8, .tx_buffer = bytes};
-    return spi_device_transmit(spi, &t);
+    /* Bounded polling avoids a queue/interrupt round trip for every tiny LCD
+       command. Higher-priority management and health tasks can preempt it. */
+    return spi_device_polling_transmit(spi, &t);
 }
 static esp_err_t command(uint8_t code, const uint8_t *data, size_t length)
 {
@@ -111,6 +159,7 @@ static uint16_t test_color(unsigned x, unsigned y, unsigned w, unsigned h)
 }
 static esp_err_t draw(void)
 {
+    int64_t started = esp_timer_get_time();
     unsigned w = config.rotation & 1 ? 160 : 128, h = config.rotation & 1 ? 128 : 160;
     if (panel_dirty) {
         const uint8_t orientation[] = {0xc0, 0xa0, 0x00, 0x60};
@@ -122,8 +171,17 @@ static esp_err_t draw(void)
             return err;
         panel_dirty = false;
     }
-    unsigned dw = w, dh = h;
+    bool builtin = replay_mode(config.mode) && replay_loaded;
+    unsigned header = builtin ? (h == 160 ? CAPTION_HEADER_PORTRAIT : CAPTION_HEADER_LANDSCAPE) : 0;
+    unsigned divider = builtin ? 1 : 0;
+    unsigned dw = w, dh = h - header - divider;
     bool clip = media_size && (config.mode == MODE_PLAY || config.mode == MODE_PAUSE);
+    if (builtin) {
+        if (w * 240 > dh * 256)
+            dw = dh * 256 / 240;
+        else
+            dh = w * 240 / 256;
+    }
     if (clip) {
         if (w * info.height > h * info.width)
             dw = h * info.width / info.height;
@@ -134,13 +192,33 @@ static esp_err_t draw(void)
         if (!dh)
             dh = 1;
     }
-    unsigned left = (w - dw) / 2, top = (h - dh) / 2;
+    unsigned left = (w - dw) / 2, top = header + divider + (h - header - divider - dh) / 2;
+    uint8_t scanline[256];
+    uint16_t caption[160];
     for (unsigned y = 0; y < h; y += 4) {
         for (unsigned row = 0; row < 4; row++) {
+            unsigned py = y + row;
+            if (builtin && py < header)
+                caption_row(caption_index, w, header, py, caption);
+            else if (builtin && py >= top && py < top + dh)
+                replay_scene_row(movie.scene, movie.tiles, (py - top) * 240 / dh, scanline);
             for (unsigned x = 0; x < w; x++) {
                 uint16_t color = 0;
-                unsigned py = y + row;
-                if (config.mode == MODE_TEST)
+                if (builtin && py < header)
+                    color = caption[x];
+                else if (builtin && py == header)
+                    color = 0xffe0;
+                else if (builtin && x >= left && x < left + dw && py >= top && py < top + dh) {
+                    color = replay_color(&movie, scanline[(x - left) * 256 / dw]);
+                    /* Both ends meet at black; the captions keep their own clock. */
+                    unsigned fade = movie.frame < 8 ? movie.frame
+                                    : movie.frames - 1 - movie.frame < 8
+                                        ? movie.frames - 1 - movie.frame
+                                        : 8;
+                    if (fade < 8)
+                        color = (((color >> 11) * fade / 8) << 11) |
+                                ((((color >> 5) & 63) * fade / 8) << 5) | ((color & 31) * fade / 8);
+                } else if (config.mode == MODE_TEST)
                     color = test_color(x, py, w, h);
                 else if (clip && x >= left && x < left + dw && py >= top && py < top + dh) {
                     unsigned sx = (x - left) * info.width / dw;
@@ -158,10 +236,13 @@ static esp_err_t draw(void)
             err = send_bytes(true, strip, w * 4 * 2);
         if (err != ESP_OK)
             return err;
-        /* Do not monopolize the single core during a full panel refresh. */
-        taskYIELD();
+        /* The bounded frame finishes before the task sleeps. A scheduler
+           quantum per strip would dominate the 40 ms total wire transfer. */
     }
     rendered++;
+    last_frame_us = (uint32_t)(esp_timer_get_time() - started);
+    if (last_frame_us > max_frame_us)
+        max_frame_us = last_frame_us;
     return ESP_OK;
 }
 static void reset_frame(void)
@@ -181,47 +262,67 @@ static void display_task(void *arg)
 {
     (void)arg;
     int64_t next = 0;
+    bool was_suspended = false;
     for (;;) {
         heartbeat_ms = (uint32_t)(esp_timer_get_time() / 1000);
-        /* Freeze playback during OTA flash writes; the saved clip is untouched. */
-        if ((!ota_busy() || ota_trial()) && driver_ready) {
+        bool suspended = ota_busy() && !ota_trial();
+        if (!suspended && driver_ready) {
             xSemaphoreTake(mutex, portMAX_DELAY);
             int64_t now = esp_timer_get_time();
-            bool playing = config.mode == MODE_PLAY && media_size && info.frames > 1;
-            if (dirty || (playing && now >= next)) {
-                if (!dirty && playing) {
-                    if (++frame == info.frames) {
-                        loops++;
-                        reset_frame();
-                    } else if (!media_frame(media, media_size, info.width * info.height,
-                                            &frame_offset, pixels)) {
+            bool builtin = replay_mode(config.mode) && replay_loaded;
+            bool playing = builtin ? config.mode == MODE_REPLAY
+                                   : config.mode == MODE_PLAY && media_size && info.frames > 1;
+            int64_t period = builtin ? movie.period_us : media_size ? 1000000 / info.fps : 100000;
+            if (was_suspended || !next || dirty)
+                next = now + period;
+            unsigned caption_now = (unsigned)((uint64_t)now / (CAPTION_PERIOD_MS * 1000ULL) % 3);
+            bool caption_changed = builtin && caption_now != caption_index;
+            caption_index = caption_now;
+            bool advance = playing && now >= next;
+            if (advance) {
+                if (builtin) {
+                    if (!replay_next(&movie))
                         driver_ready = false;
-                    }
-                }
-                if (driver_ready && draw() != ESP_OK) {
+                } else if (++frame == info.frames) {
+                    loops++;
+                    reset_frame();
+                } else if (!media_frame(media, media_size, info.width * info.height, &frame_offset,
+                                        pixels)) {
                     driver_ready = false;
-                    strlcpy(last_error, "SPI transfer failed; inspect wiring and restart.",
+                }
+                /* Retain the intended cadence instead of accumulating each
+                   scheduler delay. Never run an unbounded catch-up loop. */
+                next += period;
+                if (next < now)
+                    next = now + period;
+            }
+            if (dirty || advance || caption_changed) {
+                if (driver_ready && draw() != ESP_OK)
+                    driver_ready = false;
+                if (!driver_ready) {
+                    strlcpy(last_error,
+                            "Display decode or SPI failure; inspect diagnostics and restart.",
                             sizeof(last_error));
-                    diag_event("Display SPI transfer failed");
+                    diag_event("Display decode or SPI failure");
                 }
                 dirty = false;
-                int64_t period = media_size ? 1000000 / info.fps : 100000;
-                next = now + period;
                 if (playing && esp_timer_get_time() > next)
                     late_frames++;
             }
             xSemaphoreGive(mutex);
         }
-        vTaskDelay(pdMS_TO_TICKS(20));
+        was_suspended = suspended;
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
+
 bool display_healthy(void)
 {
     return driver_ready && (uint32_t)(esp_timer_get_time() / 1000) - heartbeat_ms < 5000;
 }
 static bool valid_config(const display_config_t *value)
 {
-    return value->magic == 0x31444345 && value->mode <= MODE_BLANK && value->rotation < 4 &&
+    return value->magic == 0x31444345 && value->mode < MODE_COUNT && value->rotation < 4 &&
            value->profile < 3 && value->inverted < 2 &&
            value->crc == record_crc(value, offsetof(display_config_t, crc));
 }
@@ -235,13 +336,23 @@ esp_err_t display_start(void)
     if (storage_ready) {
         display_config_t saved;
         size_t n = sizeof(saved);
-        err = nvs_get_blob(storage, "config", &saved, &n);
-        if (err == ESP_OK && n == sizeof(saved) && valid_config(&saved))
+        err = nvs_get_blob(storage, "config_v2", &saved, &n);
+        bool legacy = err == ESP_ERR_NVS_NOT_FOUND;
+        if (legacy) {
+            n = sizeof(saved);
+            err = nvs_get_blob(storage, "config", &saved, &n);
+        }
+        bool saved_valid = err == ESP_OK && n == sizeof(saved) && valid_config(&saved);
+        if (saved_valid)
             config = saved;
         else if (err != ESP_ERR_NVS_NOT_FOUND)
             strlcpy(last_error,
                     "Display settings unreadable; using test card. Reapply panel settings.",
                     sizeof(last_error));
+        if (legacy && (saved_valid || err == ESP_ERR_NVS_NOT_FOUND)) {
+            config.mode = MODE_REPLAY;
+            config.rotation = 1;
+        }
         n = sizeof(media);
         err = nvs_get_blob(storage, "clip", media, &n);
         stored_clip = err != ESP_ERR_NVS_NOT_FOUND;
@@ -250,7 +361,8 @@ esp_err_t display_start(void)
             uint8_t hash[32];
             sha256_bytes(media, n, hash);
             hex_encode(hash, 32, media_sha);
-            reset_frame();
+            if (!replay_mode(config.mode))
+                reset_frame();
         } else if (err != ESP_ERR_NVS_NOT_FOUND) {
             strlcpy(last_error, "Stored clip unreadable; replace or remove it explicitly.",
                     sizeof(last_error));
@@ -258,6 +370,20 @@ esp_err_t display_start(void)
     } else {
         strlcpy(last_error, "Media storage unavailable. USB recovery is required.",
                 sizeof(last_error));
+    }
+    if (!open_replay()) {
+        strlcpy(last_error, "Embedded replay failed validation.", sizeof(last_error));
+        return ESP_ERR_INVALID_CRC;
+    }
+    if (!replay_mode(config.mode)) {
+        replay_loaded = false;
+        if (media_size) {
+            size_t length = sizeof(media);
+            if (nvs_get_blob(storage, "clip", media, &length) != ESP_OK || length != media_size ||
+                !media_validate(media, length, &info))
+                return ESP_ERR_INVALID_CRC;
+        }
+        reset_frame();
     }
     gpio_config_t pins = {.pin_bit_mask = (1ULL << 0) | (1ULL << 1), .mode = GPIO_MODE_OUTPUT};
     if ((err = gpio_config(&pins)) != ESP_OK)
@@ -281,7 +407,9 @@ esp_err_t display_start(void)
         return err;
     heartbeat_ms = (uint32_t)(esp_timer_get_time() / 1000);
     driver_ready = true;
-    if (xTaskCreate(display_task, "display", 4096, NULL, tskIDLE_PRIORITY, NULL) != pdPASS) {
+    /* One bounded frame, followed by a guaranteed 10 ms sleep, gives IDLE
+       regular execution without doubling render time through time slicing. */
+    if (xTaskCreate(display_task, "display", 4096, NULL, tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
         driver_ready = false;
         return ESP_ERR_NO_MEM;
     }
@@ -302,7 +430,7 @@ static bool begin_change(void)
 static esp_err_t end_change(esp_err_t err)
 {
     if (err != ESP_OK)
-        strlcpy(last_error, "Media save failed. Previous content remains; inspect diagnostics.",
+        strlcpy(last_error, "Display operation failed. Check saved content and diagnostics.",
                 sizeof(last_error));
     else
         last_error[0] = 0;
@@ -315,23 +443,27 @@ esp_err_t display_install(const uint8_t *data, size_t size)
     media_info_t candidate;
     if (!media_validate(data, size, &candidate))
         return ESP_ERR_INVALID_ARG;
+    uint8_t hash[32];
+    char candidate_sha[65];
+    sha256_bytes(data, size, hash);
+    hex_encode(hash, 32, candidate_sha);
     if (!begin_change())
         return ESP_ERR_INVALID_STATE;
     /* Lost acknowledgements can retry the same clip without extra flash wear. */
-    if (size == media_size && !memcmp(data, media, size))
+    if (size == media_size && !strcmp(candidate_sha, media_sha))
         return end_change(ESP_OK);
     esp_err_t err = nvs_set_blob(storage, "clip", data, size);
     if (err == ESP_OK)
         err = nvs_commit(storage);
     if (err == ESP_OK) {
-        memcpy(media, data, size);
+        if (!replay_loaded)
+            memcpy(media, data, size);
         stored_clip = true;
         media_size = size;
         info = candidate;
-        uint8_t hash[32];
-        sha256_bytes(media, size, hash);
-        hex_encode(hash, 32, media_sha);
-        reset_frame();
+        memcpy(media_sha, candidate_sha, sizeof(media_sha));
+        if (!replay_loaded)
+            reset_frame();
         diag_event("Display clip saved and verified");
     }
     return end_change(err);
@@ -350,25 +482,27 @@ esp_err_t display_remove(void)
         stored_clip = false;
         memset(&info, 0, sizeof(info));
         media_sha[0] = 0;
-        reset_frame();
+        if (!replay_loaded)
+            reset_frame();
     }
     return end_change(err);
 }
 esp_err_t display_configure(const cJSON *request)
 {
-    if (!cJSON_IsObject(request) || !cJSON_GetArraySize(request) || cJSON_GetArraySize(request) > 4)
+    if (!cJSON_IsObject(request) || !cJSON_GetArraySize(request) || cJSON_GetArraySize(request) > 5)
         return ESP_ERR_INVALID_ARG;
     if (!begin_change())
         return ESP_ERR_INVALID_STATE;
     display_config_t next = config;
+    int chapter = -1;
     const cJSON *item;
     cJSON_ArrayForEach(item, request)
     {
         if (!strcmp(item->string, "mode") && cJSON_IsString(item)) {
             unsigned i = 0;
-            while (i < 4 && strcmp(item->valuestring, modes[i]))
+            while (i < MODE_COUNT && strcmp(item->valuestring, modes[i]))
                 i++;
-            if (i == 4 || ((i == MODE_PLAY || i == MODE_PAUSE) && !media_size))
+            if (i == MODE_COUNT || ((i == MODE_PLAY || i == MODE_PAUSE) && !media_size))
                 return end_change(ESP_ERR_INVALID_ARG);
             next.mode = i;
         } else if (!strcmp(item->string, "profile") && cJSON_IsString(item)) {
@@ -382,24 +516,64 @@ esp_err_t display_configure(const cJSON *request)
                    item->valuedouble >= 0 && item->valuedouble <= 3 &&
                    item->valuedouble == item->valueint) {
             next.rotation = item->valueint;
+        } else if (!strcmp(item->string, "replay_chapter") && cJSON_IsNumber(item) &&
+                   item->valuedouble >= 0 && item->valuedouble < 32 &&
+                   item->valuedouble == item->valueint) {
+            chapter = item->valueint;
         } else if (!strcmp(item->string, "inverted") && cJSON_IsBool(item)) {
             next.inverted = cJSON_IsTrue(item);
         } else {
             return end_change(ESP_ERR_INVALID_ARG);
         }
     }
+    if (chapter >= 0 && (!replay_mode(next.mode) || chapter >= replay_asset_start[28]))
+        return end_change(ESP_ERR_INVALID_ARG);
     next.crc = record_crc(&next, offsetof(display_config_t, crc));
-    if (!memcmp(&next, &config, sizeof(config)))
+    if (chapter < 0 && !memcmp(&next, &config, sizeof(config)))
         return end_change(ESP_OK);
-    esp_err_t err = nvs_set_blob(storage, "config", &next, sizeof(next));
-    if (err == ESP_OK)
-        err = nvs_commit(storage);
+    uint8_t *saved_clip = NULL;
+    if (!replay_mode(next.mode) && replay_loaded && media_size) {
+        saved_clip = malloc(media_size);
+        size_t length = media_size;
+        media_info_t checked;
+        if (!saved_clip)
+            return end_change(ESP_ERR_NO_MEM);
+        if (nvs_get_blob(storage, "clip", saved_clip, &length) != ESP_OK || length != media_size ||
+            !media_validate(saved_clip, length, &checked)) {
+            free(saved_clip);
+            return end_change(ESP_ERR_INVALID_CRC);
+        }
+    }
+    esp_err_t err = ESP_OK;
+    if (memcmp(&next, &config, sizeof(next))) {
+        err = nvs_set_blob(storage, "config_v2", &next, sizeof(next));
+        if (err == ESP_OK)
+            err = nvs_commit(storage);
+    }
     if (err == ESP_OK) {
         panel_dirty |= next.profile != config.profile || next.rotation != config.rotation ||
                        next.inverted != config.inverted;
+        bool use_replay = replay_mode(next.mode);
+        if (use_replay && !replay_loaded && !open_replay()) {
+            driver_ready = false;
+            free(saved_clip);
+            return end_change(ESP_ERR_INVALID_CRC);
+        }
+        if (!use_replay && replay_loaded) {
+            replay_loaded = false;
+            if (saved_clip)
+                memcpy(media, saved_clip, media_size);
+            reset_frame();
+        }
+        if (chapter >= 0 && !replay_seek(&movie, replay_chapter_frame(&movie, chapter))) {
+            driver_ready = false;
+            free(saved_clip);
+            return end_change(ESP_ERR_INVALID_CRC);
+        }
         config = next;
         dirty = true;
     }
+    free(saved_clip);
     return end_change(err);
 }
 uint8_t *display_copy(size_t *size)
@@ -410,8 +584,17 @@ uint8_t *display_copy(size_t *size)
     xSemaphoreTake(mutex, portMAX_DELAY);
     uint8_t *result = media_size ? malloc(media_size) : NULL;
     if (result) {
-        memcpy(result, media, media_size);
-        *size = media_size;
+        size_t length = media_size;
+        if (replay_loaded) {
+            if (nvs_get_blob(storage, "clip", result, &length) != ESP_OK || length != media_size) {
+                free(result);
+                result = NULL;
+            }
+        } else {
+            memcpy(result, media, media_size);
+        }
+        if (result)
+            *size = media_size;
     }
     xSemaphoreGive(mutex);
     return result;
@@ -445,9 +628,45 @@ cJSON *display_status(void)
     cJSON_AddNumberToObject(j, "rendered", rendered);
     cJSON_AddNumberToObject(j, "loops", loops);
     cJSON_AddNumberToObject(j, "late_frames", late_frames);
+    cJSON_AddNumberToObject(j, "last_frame_us", last_frame_us);
+    cJSON_AddNumberToObject(j, "max_frame_us", max_frame_us);
     cJSON_AddStringToObject(j, "error", last_error);
+    cJSON *replay = cJSON_AddObjectToObject(j, "replay");
+    cJSON_AddBoolToObject(replay, "active", replay_loaded && replay_mode(config.mode));
+    cJSON_AddNumberToObject(replay, "bytes", replay_asset_end - replay_asset_start);
+    cJSON_AddNumberToObject(replay, "frame", replay_loaded ? movie.frame : 0);
+    cJSON_AddNumberToObject(
+        replay, "frames",
+        (uint32_t)replay_asset_start[16] | (uint32_t)replay_asset_start[17] << 8 |
+            (uint32_t)replay_asset_start[18] << 16 | (uint32_t)replay_asset_start[19] << 24);
+    cJSON_AddNumberToObject(
+        replay, "period_us",
+        (uint32_t)replay_asset_start[20] | (uint32_t)replay_asset_start[21] << 8 |
+            (uint32_t)replay_asset_start[22] << 16 | (uint32_t)replay_asset_start[23] << 24);
+    cJSON_AddNumberToObject(replay, "chapters", replay_asset_start[28]);
+    cJSON_AddNumberToObject(replay, "world", replay_loaded ? movie.scene[2405] + 1 : 1);
+    cJSON_AddNumberToObject(replay, "level", replay_loaded ? movie.scene[2406] + 1 : 1);
+    cJSON_AddNumberToObject(replay, "loops", replay_loaded ? movie.loops : 0);
+    cJSON_AddStringToObject(replay, "caption", caption_text(caption_index));
+    cJSON_AddNumberToObject(replay, "caption_index", caption_index);
     cJSON_AddBoolToObject(j, "brightness_control", false);
     cJSON_AddBoolToObject(j, "panel_feedback", false);
     xSemaphoreGive(mutex);
     return j;
+}
+
+void display_telemetry(void)
+{
+    if (!mutex)
+        return;
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    ESP_LOGI("display",
+             "DISPLAY "
+             "{\"mode\":\"%s\",\"frame\":%lu,\"rendered\":%lu,\"loops\":%lu,\"last_frame_us\":%lu,"
+             "\"late_frames\":%lu,\"caption\":%u,\"ready\":%s}",
+             modes[config.mode], (unsigned long)(replay_loaded ? movie.frame : frame),
+             (unsigned long)rendered, (unsigned long)(replay_loaded ? movie.loops : loops),
+             (unsigned long)last_frame_us, (unsigned long)late_frames, caption_index,
+             display_healthy() ? "true" : "false");
+    xSemaphoreGive(mutex);
 }

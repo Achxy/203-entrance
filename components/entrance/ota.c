@@ -89,14 +89,26 @@ void ota_init(void)
         /* Boot metadata is authoritative if power failed after marking VALID
            but before the second journal commit. Never misreport that as rollback. */
         bool confirmed = boot_state == ESP_OTA_IMG_VALID && running_matches();
-        strlcpy(record.result, confirmed ? "confirmed" : "rolled_back", sizeof(record.result));
+        bool version_valid = false;
+        bool usb_install = !confirmed && boot_state == ESP_OTA_IMG_VALID &&
+                           !strcmp(record.result, "confirmed") &&
+                           version_compare(esp_app_get_description()->version, record.version,
+                                           &version_valid) > 0 &&
+                           version_valid;
+        strlcpy(record.result,
+                confirmed     ? "confirmed"
+                : usb_install ? "usb_installed"
+                              : "rolled_back",
+                sizeof(record.result));
         strlcpy(record.detail,
-                confirmed ? "Firmware confirmed healthy" : "Previous firmware restored",
+                confirmed     ? "Firmware confirmed healthy"
+                : usb_install ? "Signed firmware installed over USB; OTA trial was not used"
+                              : "Previous firmware restored",
                 sizeof(record.detail));
         if (store_update(&record) != ESP_OK)
             settings_healthy = false;
         state(record.result, record.detail);
-    } else if (!strcmp(record.result, "rolled_back"))
+    } else if (!strcmp(record.result, "rolled_back") || !strcmp(record.result, "usb_installed"))
         state("rolled_back", record.detail);
 }
 

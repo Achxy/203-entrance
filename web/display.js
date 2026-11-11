@@ -5,6 +5,7 @@
   let cancelled = false, previewPlaying = false, previewAt = 0, previewTimer = null, panelEdited = false;
   const canvas = $("display-preview"), context = canvas.getContext("2d");
   function controlState() {
+    globalThis.ReplayConsole?.render(state, remoteBusy || saving);
     const unavailable = remoteBusy || saving || !signedIn || !state?.ready;
     $("clip-save").disabled = unavailable || working || !draft || draft.data.length > M.CAPACITY;
     $("clip-export").disabled = !draft || working || draft.data.length > M.CAPACITY;

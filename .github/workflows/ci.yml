@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install host build prerequisites
-        run: sudo apt-get update && sudo apt-get install -y git cmake ninja-build python3.12 python3.12-venv libusb-1.0-0 build-essential
+        run: sudo apt-get update && sudo apt-get install -y git cmake ninja-build python3.12 python3.12-venv libusb-1.0-0 build-essential zlib1g-dev
       - name: Install pinned SDK and create disposable signing key
         run: python3.12 tools/entrance.py setup
       - name: Build signed test firmware and enforce slot size

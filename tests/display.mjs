@@ -4,10 +4,13 @@ import {readFile, mkdir, writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {chromium} from 'playwright';
 import '../web/media.js';
+import '../web/replay.js';
 const M=globalThis.EntranceMedia;
+const replayBytes=await readFile('assets/entrance.rpl');
+const replay=new EntranceReplay.Replay(replayBytes);
 await mkdir('.local/browser',{recursive:true});
 const server=http.createServer(async(req,res)=>{
-  const name={'/':'index.html','/app.js':'app.js','/media.js':'media.js','/display.js':'display.js','/style.css':'style.css'}[req.url];
+  const name={'/':'index.html','/app.js':'app.js','/media.js':'media.js','/display.js':'display.js','/replay.js':'replay.js','/style.css':'style.css'}[req.url];
   if(!name){res.writeHead(404).end();return;}
   res.setHeader('Content-Type',name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':'text/html');
   res.end(await readFile(`web/${name}`));
@@ -19,13 +22,15 @@ const evidence=[];
 try {
   for(const width of [1440,390,320]) {
     const context=await browser.newContext({viewport:{width,height:1000},reducedMotion:'reduce'}),page=await context.newPage();
-    const errors=[],requests=[];let saved=null,failReply=true,mode='test',puts=0,csrfChecked=0;
+    const errors=[],requests=[];let saved=null,failReply=true,mode='replay',puts=0,csrfChecked=0,replayFrame=180;
     page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>requests.push(r.url()));
     const display=()=>{
       const c=saved?M.decode(saved):null;
-      return {ready:true,storage_ready:true,suspended:false,mode,profile:'red',rotation:0,inverted:false,width:128,height:160,
+      return {ready:true,storage_ready:true,suspended:false,mode,profile:'black',rotation:1,inverted:false,width:160,height:128,
         capacity:12288,size:saved?.length||0,sha256:saved?createHash('sha256').update(saved).digest('hex'):'',title:c?.title||'',
-        clip_width:c?.width||0,clip_height:c?.height||0,fps:c?.fps||0,frames:c?.frames.length||0,frame:0,loops:2,error:''};
+        clip_width:c?.width||0,clip_height:c?.height||0,fps:c?.fps||0,frames:c?.frames.length||0,frame:0,loops:2,error:'',
+        replay:{active:mode.startsWith('replay'),bytes:replayBytes.length,frame:replayFrame,frames:replay.frames,
+          period_us:replay.period*1000,chapters:replay.chapters.length,world:1,level:1,loops:2,caption:EntranceReplay.messages[0],caption_index:0}};
     };
     await page.route(`${origin}/api/v1/**`,async route=>{
       const req=route.request(),url=new URL(req.url()),path=url.pathname.replace('/api/v1','');let body={ok:true};
@@ -36,7 +41,8 @@ try {
       else if(path==='/logs')body=[];
       else if(path==='/releases')body={message:'Offline'};
       else if(path==='/display'&&req.method()==='GET')body=display();
-      else if(path==='/display'&&req.method()==='PUT'){assert.equal(req.headers()['x-csrf-token'],'b'.repeat(32));csrfChecked++;mode=req.postDataJSON().mode||mode;}
+      else if(path==='/display'&&req.method()==='PUT'){assert.equal(req.headers()['x-csrf-token'],'b'.repeat(32));csrfChecked++;mode=req.postDataJSON().mode||mode;if(req.postDataJSON().replay_chapter!==undefined)replayFrame=0;}
+      else if(path==='/display/replay') {await route.fulfill({status:200,contentType:'application/octet-stream',body:replayBytes});return;}
       else if(path==='/display/clip'&&req.method()==='PUT'){
         assert.equal(req.headers()['x-csrf-token'],'b'.repeat(32));csrfChecked++;
         saved=req.postDataBuffer();M.decode(saved);puts++;
@@ -49,6 +55,25 @@ try {
     await page.goto(origin);await page.locator('#password').fill('correct-password');await page.locator('#login-form button').click();
     await page.locator('#console').waitFor({state:'visible'});
     await page.locator('#display-badge').filter({hasText:'SPI ready'}).waitFor();
+    await page.locator('#replay-studio').waitFor({state:'visible'});
+    await page.locator('#replay-pause').click();await page.locator('#replay-position').filter({hasText:'Paused'}).waitFor();assert.equal(mode,'replay_pause');
+    await page.locator('#replay-play').focus();await page.keyboard.press('Enter');await page.locator('#replay-position').filter({hasText:'Playing'}).waitFor();
+    await page.locator('#replay-preview-toggle').click();await page.locator('#replay-work').filter({hasText:'Local preview only'}).waitFor();
+    const captionHashes=[];
+    for(let sample=0;sample<3;sample++) {
+      captionHashes.push(await page.evaluate(()=>{
+        const c=document.getElementById('replay-preview'),ctx=c.getContext('2d');
+        if(c.width!==160||c.height!==128)throw new Error('Preview is not landscape');
+        const divider=ctx.getImageData(0,40,160,1).data;
+        for(let x=0;x<160;x++)if(divider[x*4]!==255||divider[x*4+1]!==255||divider[x*4+2]!==0)throw new Error('Yellow divider missing');
+        return Array.from(ctx.getImageData(0,0,160,40).data).join(',');
+      }));
+      await page.waitForTimeout(2100);
+    }
+    assert.equal(new Set(captionHashes).size,3,'Each message should appear in the two-second cycle');
+    await page.locator('#replay-preview-toggle').click();
+    await page.locator('#replay-restart').click();await page.locator('#replay-position').filter({hasText:'0:00 /'}).waitFor();
+    await page.locator('#replay-studio').screenshot({path:`.local/browser/replay-${width}.png`});
     await page.locator('#clip-source').selectOption('demo');await page.locator('#clip-prepare').click();
     await page.locator('#clip-work').filter({hasText:'Preview ready'}).waitFor();
     assert.equal(await page.locator('#clip-save').isEnabled(),true);

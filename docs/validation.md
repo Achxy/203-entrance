@@ -1,6 +1,6 @@
 # Validation record
 
-**Qualification is in progress; no stable release has been declared.** The user expanded the OTA foundation to include an ST7735R and persistent short clips. Combined hardware checks and a continuous operating soak remain required. Public `0.1.0` and `0.1.1` assets are prereleases; `0.1.0` is explicitly superseded because qualification found a maintenance-startup defect.
+**Qualification is in progress; no stable release has been declared.** The user expanded the OTA foundation to include an ST7735R, persistent short clips and an autonomous full-game scene replay. Combined hardware checks and a continuous operating soak remain required. Public `0.1.0` and `0.1.1` assets are prereleases; `0.1.0` is explicitly superseded because qualification found a maintenance-startup defect.
 
 ## Hardware and preservation
 
@@ -18,7 +18,18 @@ Original full flash was saved before installation: 4,194,304 bytes, SHA-256 `a0f
 - **Six software fault/recovery checks passed:** missing confirmation, stale early confirmation, failed startup despite fresh contacts, reset during trial, deliberate health-task watchdog, and explicit rollback. Serial evidence distinguished watchdogs from software restarts.
 - An unavailable-settings-NVS fault initially prevented Wi-Fi maintenance startup. Disabling driver-owned NVS fixed it: actual hotspot and certificate-pinned HTTPS maintenance login/status passed, unhealthy confirmation was refused, and rollback preserved settings and credentials. The test did not erase the settings partition.
 
-The corrected OTA-only cycle series uses `0.1.1-rc.10` through `rc.29`, with the last installation through GitHub. Earlier cycles before the storage correction remain historical evidence. The completed foundation series and subsequent combined-display tests will be reported separately.
+The corrected OTA-only cycle series **completed all 20 alternating updates**, using `0.1.1-rc.10` through `rc.29`, with the last installation through GitHub. Settings generation 6 was preserved. Earlier cycles before the storage correction remain historical evidence. This is foundation evidence and does not establish qualification of later display scheduling or replay changes.
+
+## Display and replay evidence, 11 November 2026
+
+- The user physically confirmed the RGB test card, corners, grayscale ramp and later uniform lossless animation. The correct panel profile is black/RGB. The first Mario preview was also physically confirmed; subsequent requested changes selected landscape, larger text, a yellow divider and two seconds per message.
+- Eleven real-board custom-media cases passed, including 24 full-capacity 12,288-byte replacements, binary hash readback, malformed/truncated/oversized rejection, interrupted-body preservation and OTA conflicts.
+- Signed preview versions `0.2.0-rc.4` through `rc.8` were installed over USB with full pre-install backups, inactive-slot writes, signature/readback verification and 30 continuous healthy seconds. These are **USB installation checks, not OTA trial-confirmation checks**.
+- The initial idle-priority replay ran about 7.7 frames/second. A bounded task one priority above IDLE, guaranteed sleeps and retained frame deadlines sustained about 10 frames/second on `rc.8`. Observed settled free heap was 134,808 bytes, with no reset in that measured interval. This short observation is not a 60-minute soak or a concurrent HTTPS-load test.
+- The complete asset contains all 32 levels and the ending: **16,500 frames, 1,647.294 seconds, 693,570 bytes**. Offline capture compared all 16,484 sampled 256×240 palette-index rasters with the shipped C renderer, with zero mismatches. The C decoder also reproduced all 16,500 packed scenes and wrapped correctly. Exact source hashes and reproducible evidence are in [replay provenance](../assets/replay-provenance.json).
+- No ROM program code or emulator runs on the board. The controller sequence is locally planned, favors walking, traverses every level, and is replayed continuously from power-on. Imported speedrun/TAS movies were excluded.
+
+The Mac currently retains its Internet network; the previously shared phone uplink is unavailable. USB work continues without joining the ESP's offline hotspot. Actual combined-firmware HTTPS/OTA tests require a reachable shared network and remain a separate gate.
 
 ## Defects found during qualification
 
@@ -26,9 +37,9 @@ Initial browser startup load caused idle-watchdog resets inside TLS/password der
 
 ## Automated combined-firmware checks
 
-- **44 host test methods pass**, with additional subcases: actual C compatibility/SemVer/CRC, request/manifest parsing, authentication, settings selection and OTA state transitions, plus Python RSA verification and client recovery. New media tests execute the actual C parser/decoder and compare the CLI parser over 1,500 deterministic mutations, all truncations, malformed runs, invalid colors, odd-pixel padding and size bounds.
+- **54 host test methods pass**, with additional subcases: actual C compatibility/SemVer/CRC, request/manifest parsing, authentication, settings selection and OTA state transitions, plus Python RSA verification and client recovery. Media tests execute the actual C parser/decoder and compare the CLI parser over 1,500 deterministic mutations, all truncations, malformed runs, invalid colors, odd-pixel padding and size bounds. Replay tests cover packed deltas, block boundaries, seeks, loops, malformed scenes and index bounds; USB tests reject stale/reset/unhealthy/wrong-version boot evidence.
 - JavaScript ECL1 round trips, palette quantization, checksum and bounds pass.
-- Mocked browser regressions pass at 1440/390/320 pixels. The display editor additionally passes both themes, real browser WebM decoding, message conversion, preview, save hash readback, lost acknowledgement, pause, download, removal, invalid clips and duration limits. Screenshots were inspected; no horizontal overflow or external assets were observed.
+- Mocked browser regressions pass at 1440/390/320 pixels. The display editor additionally passes both themes, real browser WebM decoding, message conversion, preview, save hash readback, lost acknowledgement, pause, download, removal, invalid clips and duration limits. Replay controls, keyboard activation, landscape preview, the yellow divider and all three captions in a two-second cycle pass. All six portrait/landscape caption renderings were compared pixel-for-pixel between C and the browser. Screenshots were inspected; no horizontal overflow or external assets were observed.
 - Signed display candidate `0.2.0-rc.1` is 1,183,744 bytes including signature padding, leaving 782,336 bytes in each unchanged application slot. Native signature verification and recovery-policy checks pass.
 
 Mocked browser APIs and native flash/signature doubles do not prove actual storage, electrical behavior, power resilience or performance. Those are separate hardware gates. A driver reporting SPI success cannot prove that the write-only panel shows pixels.
@@ -37,8 +48,8 @@ Mocked browser APIs and native flash/signature doubles do not prove actual stora
 
 | Gate | Required evidence |
 |---|---|
-| Display hardware | Visible test card/colors/edges; actual playback and controls |
-| Media storage | Full-capacity replacement, interrupted/rejected transfers, persistence across reboot and OTA/rollback |
+| Display hardware | Full-length replay installation, both loop boundaries and actual browser controls under replay load |
+| Media storage | Combined replay/custom-mode persistence across OTA and rollback; earlier full-capacity/rejection cases have passed |
 | Combined regression | Actual browser controls and signed updates under display load |
 | Stability | Alternating-cycle evidence plus 60 continuous minutes without unexplained resets, heap loss, corrupted settings or management loss |
 | Delivery | Clean source/tag, passing CI, signed public release, installed final image and verified private USB recovery bundle |
