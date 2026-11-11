@@ -751,47 +751,63 @@ def cmd_monitor(args):
 
 
 def cmd_soak(args):
-    if args.serial:
-        import serial
-        rows = []
-        deadline = time.monotonic() + args.minutes * 60
-        last_sample = time.monotonic()
-        with serial.Serial(serial_port(args), 115200, timeout=1) as port:
-            while time.monotonic() < deadline:
-                line = port.readline().decode(errors="replace")
-                if "HEALTH {" in line:
-                    row = json.loads(line.split("HEALTH ", 1)[1].split("\x1b", 1)[0])
-                    if rows and (row["uptime_ms"] <= rows[-1]["uptime_ms"] or row["version"] != rows[-1]["version"]):
-                        raise ValueError("Unexpected reset or firmware change during soak")
-                    if not row["services"] or row["trial"]:
-                        raise ValueError("Unhealthy or unconfirmed firmware during soak")
-                    rows.append(row)
-                    last_sample = time.monotonic()
-                    private_write(Path(args.output), json.dumps(rows, indent=2) + "\n")
-                    print(f"uptime={row['uptime_ms']/1000:.0f}s heap={row['free_heap']}", flush=True)
-                if time.monotonic() - last_sample > 45:
-                    raise TimeoutError("No health telemetry for 45 seconds")
-        if len(rows) < max(1, args.minutes * 4 - 2):
-            raise ValueError("Insufficient telemetry for the requested soak")
-        print("Serial soak complete:", len(rows), "samples")
-        return
-    device = Device(args.host)
-    device.login()
-    deadline = time.monotonic() + args.minutes * 60
-    rows = []
-    previous = None
-    while time.monotonic() < deadline:
-        current = device.request("GET", "/api/v1/status")
-        if previous and current["uptime_ms"] < previous["uptime_ms"]:
-            raise ValueError("Unexpected reset during soak")
-        rows.append({k: current[k] for k in ("version", "slot", "uptime_ms", "free_heap", "minimum_heap", "largest_block", "reset_reason")})
-        previous = current
-        private_write(Path(args.output), json.dumps(rows, indent=2) + "\n")
-        print(f"uptime={current['uptime_ms']/1000:.0f}s heap={current['free_heap']} minimum={current['minimum_heap']}", flush=True)
-        time.sleep(15)
-        if len(rows) % 200 == 0:
+    from soak import SoakWindow, http_sample
+    if not 1 <= args.minutes <= 1440:
+        raise ValueError("Choose a soak duration between 1 and 1440 minutes")
+    window = SoakWindow(args.minutes * 60, replay=args.replay, min_loops=args.min_loops)
+    output = Path(args.output)
+    def save(**kwargs):
+        report = window.report(**kwargs)
+        report["transport"] = "USB" if args.serial else "HTTPS"
+        private_write(output, json.dumps(report, indent=2) + "\n")
+        return report
+    def observe(sample):
+        complete = window.observe(sample, time.monotonic())
+        save()
+        if window.rows:
+            print(f"healthy_elapsed={window.rows[-1]['elapsed_s']:.1f}s uptime={sample['uptime_ms']/1000:.0f}s heap={sample['free_heap']}", flush=True)
+        return complete
+    device = None
+    try:
+        if args.serial:
+            import serial
+            last_sample = time.monotonic()
+            pending = None
+            with serial.Serial(serial_port(args), 115200, timeout=1) as port:
+                while True:
+                    line = port.readline().decode(errors="replace")
+                    if "HEALTH {" in line:
+                        pending = json.loads(line.split("HEALTH ", 1)[1].split("\x1b", 1)[0])
+                    elif "DISPLAY {" in line and pending is not None:
+                        pending["display"] = json.loads(line.split("DISPLAY ", 1)[1].split("\x1b", 1)[0])
+                        last_sample = time.monotonic()
+                        if observe(pending):
+                            break
+                        pending = None
+                    if time.monotonic() - last_sample > 45:
+                        raise TimeoutError("No paired health/display telemetry for 45 seconds")
+        else:
+            device = Device(args.host)
             device.login()
-    print("Soak samples saved:", args.output)
+            renewed = time.monotonic()
+            while True:
+                if observe(http_sample(device.request("GET", "/api/v1/status"))):
+                    break
+                time.sleep(15)
+                if time.monotonic() - renewed >= 2400:
+                    device.login()
+                    renewed = time.monotonic()
+        report = save(complete=True)
+        if not report["passed"]:
+            raise ValueError("; ".join(report["errors"]))
+        print("Continuous soak passed:", output)
+    except BaseException as error:
+        save(complete=bool(window.rows and window.rows[-1]["elapsed_s"] >= window.required),
+             error=str(error) or type(error).__name__)
+        raise
+    finally:
+        if device and device.connection:
+            device.connection.close()
 
 
 def cmd_display(args):
@@ -889,6 +905,8 @@ def main():
         if name == "soak":
             p.add_argument("--serial", action="store_true", help="Collect USB health telemetry while retaining the host Internet connection")
             p.add_argument("--minutes", type=int, default=60)
+            p.add_argument("--replay", action="store_true", help="Require continuous built-in replay")
+            p.add_argument("--min-loops", type=int, default=0, help="Require this many observed replay loop boundaries")
             p.add_argument("--output", default=str(LOCAL / "soak.json"))
     args = parser.parse_args()
     PROFILE = (getattr(args, "device_profile", None) or PROFILE).expanduser().resolve()

@@ -109,7 +109,7 @@ void ota_init(void)
             settings_healthy = false;
         state(record.result, record.detail);
     } else if (!strcmp(record.result, "rolled_back") || !strcmp(record.result, "usb_installed"))
-        state("rolled_back", record.detail);
+        state(record.result, record.detail);
 }
 
 bool ota_busy(void)

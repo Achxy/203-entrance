@@ -429,6 +429,18 @@ int main(void)
     ram_reset();
     ota_init();
     assert(!strcmp(phase, "confirmed")); /* reset after VALID, before journal confirmation */
+    /* A newer physical USB installation retains the old OTA journal. Its
+       outcome must remain USB-installed on subsequent ordinary restarts. */
+    running_slot = 0;
+    strcpy(app.version, "1.2.0");
+    ram_reset();
+    ota_init();
+    assert(!strcmp(phase, "usb_installed"));
+    assert(!pending && settings_healthy);
+    ram_reset();
+    ota_init();
+    assert(!strcmp(phase, "usb_installed"));
+    assert(!pending && settings_healthy);
     fresh();
     transfer(ticket);
     assert(!ota_finish());

@@ -108,8 +108,8 @@ The certificate is retained across OTA and rollback. A changed fingerprint requi
 | `network --ssid NAME`, `network --disable` | Optional uplink; password is prompted privately |
 | `check`, `install` | Verify and install a public GitHub release |
 | `keygen`, `sign`, `release --publish` | Local production signing and release publication |
-| `soak --minutes 60` | Management API stability samples |
-| `soak --serial --minutes 60 --port PORT` | USB health samples while keeping the host online |
+| `soak --minutes 60 --replay --min-loops 2` | Continuous HTTPS health, settings, replay and heap checks |
+| `soak --serial --minutes 60 --replay --min-loops 2 --port PORT` | Continuous USB health/replay checks while keeping the host online |
 
 Run `./entrance COMMAND --help` for options. `build --fault startup|watchdog|reset|activation|storage` creates an explicit qualification image; publication rejects these builds. The `storage` test leaves saved settings intact but makes their NVS partition unavailable to that image, exercising HTTPS maintenance and trial rollback. `upload --no-confirm` exercises the missed-confirmation rollback path.
 

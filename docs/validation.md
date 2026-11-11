@@ -55,9 +55,22 @@ application on this fresh board until an update populates the other slot.
 
 Initial browser startup load caused idle-watchdog resets inside TLS/password derivation. Yields only at request boundaries were insufficient. HTTPS and release workers now run at time-sliced idle priority; health/radio retain higher priority and both watchdogs remain enabled. Subsequent startup browser checks passed. A later lost upload reply led to bounded accepted-offset recovery in both clients. Trial confirmation also requires updater contact within the preceding ten seconds at the healthy boundary. These findings are retained, not hidden by later successful installations.
 
+Second-board qualification also found a reporting error: a previously recorded
+`usb_installed` outcome changed to `rolled_back` on an ordinary restart. The
+outcome is now preserved, with a production-state-machine regression covering
+both the newer USB installation and its subsequent restart.
+
+The soak command starts its duration at the first healthy sample, requires a
+complete device/host time window, and rejects unhealthy/trial states, resets,
+stale telemetry and a settled median heap decline greater than 2 KiB. Replay
+qualification additionally requires advancing rendering and the requested loop
+count. HTTPS checks also enforce unchanged settings generation, clip hash and
+panel configuration. USB evidence alone does not establish HTTPS availability
+or credential/settings persistence.
+
 ## Automated combined-firmware checks
 
-- **58 host test methods pass**, with additional subcases: actual C compatibility/SemVer/CRC, request/manifest parsing, authentication, settings selection and OTA state transitions, plus Python RSA verification and client recovery. Media tests execute the actual C parser/decoder and compare the CLI parser over 1,500 deterministic mutations, all truncations, malformed runs, invalid colors, odd-pixel padding and size bounds. Replay tests cover packed deltas, block boundaries, seeks, loops, malformed scenes and index bounds; USB tests reject stale/reset/unhealthy/wrong-version boot evidence, allow bounded initial startup, verify the initial valid baseline record and preserve separate device profiles.
+- **63 host test methods pass**, with additional subcases: actual C compatibility/SemVer/CRC, request/manifest parsing, authentication, settings selection and OTA state transitions, plus Python RSA verification and client recovery. Media tests execute the actual C parser/decoder and compare the CLI parser over 1,500 deterministic mutations, all truncations, malformed runs, invalid colors, odd-pixel padding and size bounds. Replay tests cover packed deltas, block boundaries, seeks, loops, malformed scenes and index bounds; USB tests reject stale/reset/unhealthy/wrong-version boot evidence, allow bounded initial startup, verify the initial valid baseline record and preserve separate device profiles. Soak tests reject incomplete windows, resets, stalled replay, missing loop boundaries, settings changes and progressive heap loss.
 - JavaScript ECL1 round trips, palette quantization, checksum and bounds pass.
 - Mocked browser regressions pass at 1440/390/320 pixels. The display editor additionally passes both themes, real browser WebM decoding, message conversion, preview, save hash readback, lost acknowledgement, pause, download, removal, invalid clips and duration limits. Replay controls, keyboard activation, landscape preview, the yellow divider and all three captions in a two-second cycle pass. All six portrait/landscape caption renderings were compared pixel-for-pixel between C and the browser. Screenshots were inspected; no horizontal overflow or external assets were observed.
 - Signed display candidate `0.2.0-rc.1` is 1,183,744 bytes including signature padding, leaving 782,336 bytes in each unchanged application slot. Native signature verification and recovery-policy checks pass.

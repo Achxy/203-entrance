@@ -26,12 +26,16 @@ See [replay controls, compression and reproduction](replay.md).
 | RES / RESET | GPIO0 |
 | DC / A0 | GPIO1 |
 | CS | GPIO5 |
-| BL | 3V3 |
+| BL / LED+ | 3V3 |
+| LED−, when exposed | GND |
 
 SDA is SPI MOSI, not I²C. The supplied Arduino library's initialization values
 are adapted for the native ESP-IDF SPI driver; no Arduino runtime is used.
 The separate microSD pins are not wired or used. BL is permanently powered, so
 **Blank screen** renders black pixels without switching off the backlight.
+On the tested module, VCC alone did not power the backlight after installation;
+connecting LED+ to 3V3 restored visible output. Supply both VCC and LED+.
+A white backlight alone does not prove the LCD controller is receiving data.
 
 A board can be provisioned before the display is connected. After attaching the
 panel with this same mapping, reset or power-cycle the ESP32 so the LCD receives
