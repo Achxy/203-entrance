@@ -4,9 +4,9 @@
 
 ## Hardware and preservation
 
-One ESP32-C3 Super Mini, revision 0.4, 4 MB XMC flash, 40 MHz crystal and native USB Serial/JTAG is under test. Display wiring is documented in [display.md](display.md). The microSD interface is not connected.
+Two ESP32-C3 Super Mini boards, revision 0.4, 4 MB XMC flash, 40 MHz crystal and native USB Serial/JTAG have been provisioned. The original board supplied the display observations below. The second board was flashed before its display was connected. Display wiring is documented in [display.md](display.md). The microSD interface is not connected.
 
-Original full flash was saved before installation: 4,194,304 bytes, SHA-256 `a0f6eb5c4d053e689d5dcd3723e0908319e4d5fcf067344cbfe001b2c639e1db`. A second pre-install backup has separate matching metadata and is not assumed identical. Unique identity and the signed baseline were installed over USB. No eFuse write command has been used. Final readback, security-state comparison and the private recovery bundle remain delivery gates.
+The original board's full flash was saved before installation: 4,194,304 bytes, SHA-256 `a0f6eb5c4d053e689d5dcd3723e0908319e4d5fcf067344cbfe001b2c639e1db`. The second board has its own pre-install backup and matching metadata. Each received a unique identity and signed baseline over USB. No eFuse write command has been used. The second-board readback, security-state comparison and private recovery bundle are described below.
 
 ## Measured OTA and security evidence
 
@@ -31,13 +31,33 @@ The corrected OTA-only cycle series **completed all 20 alternating updates**, us
 
 The Mac currently retains its Internet network; the previously shared phone uplink is unavailable. USB work continues without joining the ESP's offline hotspot. Actual combined-firmware HTTPS/OTA tests require a reachable shared network and remain a separate gate.
 
+## Second-board installation
+
+The second board received the **exact published `0.2.0-rc.9` application**:
+SHA-256 `b51e31f10a493f070cd406bed240f3e67647cfc0f8d332f0ec8c01b9b92c83ee`,
+1,904,640 bytes including signature padding, leaving 61,440 bytes in each slot.
+Its original 4 MB flash was saved before erasure. It received unique credentials
+and a separate HTTPS identity using the existing project signing key.
+
+Full-flash readback matched the application, bootloader, partition table,
+identity and initial valid `ota_0` boot record. The inactive application remained
+empty and the next USB-update plan selected `ota_1`. Reported security fields
+were unchanged. Both initial and subsequent boots passed 30 continuous healthy
+seconds with advancing replay counters. Original/installed full-flash backups,
+credentials and installation evidence remain private and associated with that board.
+
+This is software/USB evidence **without an attached display**. Visible output,
+complete loop operation, concurrent HTTPS/OTA load and a 60-minute combined
+operating soak still require hardware validation. There is no valid previous
+application on this fresh board until an update populates the other slot.
+
 ## Defects found during qualification
 
 Initial browser startup load caused idle-watchdog resets inside TLS/password derivation. Yields only at request boundaries were insufficient. HTTPS and release workers now run at time-sliced idle priority; health/radio retain higher priority and both watchdogs remain enabled. Subsequent startup browser checks passed. A later lost upload reply led to bounded accepted-offset recovery in both clients. Trial confirmation also requires updater contact within the preceding ten seconds at the healthy boundary. These findings are retained, not hidden by later successful installations.
 
 ## Automated combined-firmware checks
 
-- **54 host test methods pass**, with additional subcases: actual C compatibility/SemVer/CRC, request/manifest parsing, authentication, settings selection and OTA state transitions, plus Python RSA verification and client recovery. Media tests execute the actual C parser/decoder and compare the CLI parser over 1,500 deterministic mutations, all truncations, malformed runs, invalid colors, odd-pixel padding and size bounds. Replay tests cover packed deltas, block boundaries, seeks, loops, malformed scenes and index bounds; USB tests reject stale/reset/unhealthy/wrong-version boot evidence.
+- **58 host test methods pass**, with additional subcases: actual C compatibility/SemVer/CRC, request/manifest parsing, authentication, settings selection and OTA state transitions, plus Python RSA verification and client recovery. Media tests execute the actual C parser/decoder and compare the CLI parser over 1,500 deterministic mutations, all truncations, malformed runs, invalid colors, odd-pixel padding and size bounds. Replay tests cover packed deltas, block boundaries, seeks, loops, malformed scenes and index bounds; USB tests reject stale/reset/unhealthy/wrong-version boot evidence, allow bounded initial startup, verify the initial valid baseline record and preserve separate device profiles.
 - JavaScript ECL1 round trips, palette quantization, checksum and bounds pass.
 - Mocked browser regressions pass at 1440/390/320 pixels. The display editor additionally passes both themes, real browser WebM decoding, message conversion, preview, save hash readback, lost acknowledgement, pause, download, removal, invalid clips and duration limits. Replay controls, keyboard activation, landscape preview, the yellow divider and all three captions in a two-second cycle pass. All six portrait/landscape caption renderings were compared pixel-for-pixel between C and the browser. Screenshots were inspected; no horizontal overflow or external assets were observed.
 - Signed display candidate `0.2.0-rc.1` is 1,183,744 bytes including signature padding, leaving 782,336 bytes in each unchanged application slot. Native signature verification and recovery-policy checks pass.
@@ -48,10 +68,10 @@ Mocked browser APIs and native flash/signature doubles do not prove actual stora
 
 | Gate | Required evidence |
 |---|---|
-| Display hardware | Full-length replay installation, both loop boundaries and actual browser controls under replay load |
+| Display hardware | Full replay on an attached display, both loop boundaries and actual browser controls under replay load; second-board USB installation has passed |
 | Media storage | Combined replay/custom-mode persistence across OTA and rollback; earlier full-capacity/rejection cases have passed |
 | Combined regression | Actual browser controls and signed updates under display load |
 | Stability | Alternating-cycle evidence plus 60 continuous minutes without unexplained resets, heap loss, corrupted settings or management loss |
 | Delivery | Clean source/tag, passing CI, signed public release, installed final image and verified private USB recovery bundle |
 
-Scope is one attached board. Phone-sized layouts use desktop Chromium; physical-phone certificate enrollment remains unverified. Original OTA power-cut/authentication/fault evidence can be carried forward only with its component scope stated. New display/storage behavior requires its own evidence.
+Display/electrical evidence belongs to the original board; the second board currently has software/USB evidence only. Phone-sized layouts use desktop Chromium; physical-phone certificate enrollment remains unverified. Original OTA power-cut/authentication/fault evidence can be carried forward only with its component scope stated. New display/storage behavior requires its own evidence.

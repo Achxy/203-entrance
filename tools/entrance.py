@@ -217,11 +217,16 @@ def create_identity(mac: str, reset=False) -> dict:
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.x509.oid import NameOID
-    if PROFILE.exists() and not reset:
+    device = "entrance-" + mac.replace(":", "")[-6:]
+    directory = LOCAL / "devices" / device
+    if PROFILE.exists():
         profile = json.loads(PROFILE.read_text())
         if profile["mac"] != mac:
             raise ValueError("Profile belongs to a different board")
-        return profile
+        if not reset:
+            return profile
+    elif not reset and any((directory / name).exists() for name in ("device-cert.pem", "device-key.pem")):
+        raise ValueError("Existing identity files found; select the board's saved device profile or explicitly reset access")
     if PROFILE.exists():
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         old = json.loads(PROFILE.read_text())
@@ -229,8 +234,6 @@ def create_identity(mac: str, reset=False) -> dict:
         private_write(backup / "device.json", PROFILE.read_bytes())
         for name in ("certificate", "tls_key"):
             private_write(backup / Path(old[name]).name, Path(old[name]).read_bytes())
-    device = "entrance-" + mac.replace(":", "")[-6:]
-    directory = LOCAL / "devices" / device
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     key = ec.generate_private_key(ec.SECP256R1())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, device)])
@@ -265,7 +268,7 @@ def identity_image(profile: dict) -> Path:
     profile["signing_public_sha256"] = fingerprint
     private_write(PROFILE, json.dumps(profile, indent=2) + "\n")
     public_hex = public.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.PKCS1).hex()
-    csv_path = LOCAL / "identity.csv"
+    csv_path = PROFILE.parent / "identity.csv"
     values = {"ssid": profile["ssid"], "ap_pass": profile["ap_password"], "id": profile["id"],
               "salt": profile["admin_salt"], "admin_hash": profile["admin_hash"], "sign_pub": public_hex}
     with csv_path.open("w", newline="") as stream:
@@ -277,7 +280,7 @@ def identity_image(profile: dict) -> Path:
         writer.writerow(["cert", "file", "string", profile["certificate"]])
         writer.writerow(["tls_key", "file", "string", profile["tls_key"]])
     csv_path.chmod(0o600)
-    path = LOCAL / "identity.bin"
+    path = PROFILE.parent / "identity.bin"
     generator = SDK / "components/nvs_flash/nvs_partition_generator/nvs_partition_gen.py"
     run([runtime(), generator, "generate", csv_path, path, "0x6000"])
     path.chmod(0o600)
@@ -297,6 +300,7 @@ def cmd_provision(args):
 
 
 def cmd_flash(args):
+    from usb_install import initial_boot_record
     cmd_audit(args)
     binary = ROOT / "build/203-entrance.bin"
     image_metadata(binary)
@@ -313,8 +317,11 @@ def cmd_flash(args):
             raise ValueError(f"Refusing irreversible security configuration: {option}")
     # Initial installation only: a verified full backup precedes erasure.
     # Provision identity and the signed baseline in the same write operation.
-    blank = LOCAL / "initial-state.bin"
+    blank = PROFILE.parent / "initial-state.bin"
     initial = bytearray([0xFF]) * 0x17000
+    # A durable valid baseline enables a later settings-preserving USB update
+    # and gives the first OTA trial an explicit previous boot record.
+    initial[0x7000:0x8000] = initial_boot_record()
     initial[0x9000:0xF000] = identity_binary.read_bytes()
     private_write(blank, initial)
     tool("esptool", "--chip", "esp32c3", "--port", port, "erase-flash")
@@ -835,6 +842,7 @@ def cmd_media(args):
 
 
 def main():
+    global PROFILE
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     handlers = {"setup": cmd_setup, "doctor": cmd_doctor, "keygen": cmd_keygen, "build": cmd_build,
@@ -850,6 +858,8 @@ def main():
             p.add_argument("--port")
         if name in {"status", "upload", "network", "check", "install", "rollback", "diagnostics", "soak", "display", "media"}:
             p.add_argument("--host")
+        if name in {"provision", "flash", "usb-install", "status", "upload", "network", "check", "install", "rollback", "diagnostics", "soak", "display", "media"}:
+            p.add_argument("--device-profile", type=Path, help="Private identity/credentials file for a particular board; default is .local/device.json")
         if name == "build":
             p.add_argument("--version", default="0.1.0")
             p.add_argument("--fault", choices=["none", "startup", "watchdog", "reset", "activation", "storage"], default="none",
@@ -881,6 +891,7 @@ def main():
             p.add_argument("--minutes", type=int, default=60)
             p.add_argument("--output", default=str(LOCAL / "soak.json"))
     args = parser.parse_args()
+    PROFILE = (getattr(args, "device_profile", None) or PROFILE).expanduser().resolve()
     try:
         args.handler(args)
     except (ValueError, RuntimeError, OSError, subprocess.CalledProcessError) as error:

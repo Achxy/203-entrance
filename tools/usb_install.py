@@ -8,6 +8,22 @@ FLASH_BYTES = 0x400000
 SLOT_OFFSETS = (0x20000, 0x200000)
 
 
+def _valid_boot_record(sequence: int) -> bytes:
+    if not 1 <= sequence < 0xFFFFFFFF:
+        raise ValueError('Invalid boot-selection sequence')
+    sector = bytearray(b'\xff' * 4096)
+    struct.pack_into('<I', sector, 0, sequence)
+    # Physical USB baselines are host-verified. Network updates retain trials.
+    struct.pack_into('<II', sector, 24, 2,
+                     binascii.crc32(struct.pack('<I', sequence), 0xFFFFFFFF))
+    return bytes(sector)
+
+
+def initial_boot_record() -> bytes:
+    """Select the signed initial ota_0 baseline without leaving metadata blank."""
+    return _valid_boot_record(1)
+
+
 class HealthyBoot:
     """Require one continuous healthy boot of the expected physical install."""
     def __init__(self, version: str):
@@ -21,13 +37,19 @@ class HealthyBoot:
             raise ValueError('Invalid USB health uptime')
         if row.get('version') != self.version:
             raise ValueError('Unexpected firmware booted after USB installation')
-        if row.get('services') is not True or row.get('trial') is not False:
-            raise ValueError('USB firmware did not report healthy services outside an OTA trial')
+        if row.get('trial') is not False:
+            raise ValueError('USB firmware unexpectedly entered an OTA trial')
         if self.previous is not None and uptime <= self.previous:
             raise ValueError('USB firmware restarted or repeated stale health telemetry')
+        self.previous = uptime
+        # The health task starts before networking and display initialization.
+        # Permit that bounded startup period, then require continuous health.
+        if row.get('services') is not True:
+            if self.first is None and uptime < 30000:
+                return False
+            raise ValueError('USB firmware did not retain healthy services')
         if self.first is None:
             self.first = uptime
-        self.previous = uptime
         return uptime - self.first >= 30000
 
 
@@ -97,11 +119,6 @@ def plan(backup: bytes, partition_table: bytes) -> dict:
         next_seq += 1
     if next_seq >= 0xFFFFFFFF:
         raise ValueError('Boot sequence exhausted; use USB reprovisioning')
-    sector = bytearray(b'\xff' * 4096)
-    struct.pack_into('<I', sector, 0, next_seq)
-    # USB is an explicitly trusted physical installation, like the initial
-    # baseline. OTA trial confirmation remains mandatory for network updates.
-    struct.pack_into('<II', sector, 24, 2, binascii.crc32(struct.pack('<I', next_seq), 0xFFFFFFFF))
     return {'active_slot': active, 'destination_slot': destination,
             'application_offset': SLOT_OFFSETS[destination],
-            'metadata_offset': 0x10000 + (1-index)*4096, 'metadata': bytes(sector)}
+            'metadata_offset': 0x10000 + (1-index)*4096, 'metadata': _valid_boot_record(next_seq)}

@@ -33,6 +33,11 @@ are adapted for the native ESP-IDF SPI driver; no Arduino runtime is used.
 The separate microSD pins are not wired or used. BL is permanently powered, so
 **Blank screen** renders black pixels without switching off the backlight.
 
+A board can be provisioned before the display is connected. After attaching the
+panel with this same mapping, reset or power-cycle the ESP32 so the LCD receives
+its initialization sequence. USB health and advancing replay counters without a
+panel verify software operation only; they cannot verify wiring or visible pixels.
+
 Open **Panel setup & test card**. The attached panel uses the black-tab/RGB profile;
 the initial red-tab/BGR setting visibly swapped orange and blue. Verify the white
 perimeter, yellow upper-left and magenta upper-right corners, and red/green/blue

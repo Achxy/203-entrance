@@ -38,7 +38,24 @@ For an initial USB installation:
 ./entrance flash --port /dev/cu.usbmodem1101
 ```
 
+For another board, give it a separate private device profile. The same signed
+firmware and project signing key serve every compatible board; each device gets
+its own hotspot, administrator credentials and HTTPS identity:
+
+```sh
+./entrance flash --port PORT --device-profile .local/devices/BOARD/device.json
+./entrance status --device-profile .local/devices/BOARD/device.json
+```
+
+Device commands accept `--device-profile`; the default remains `.local/device.json`.
+Keep each board's profile and certificate files together. Selecting the wrong
+existing profile is rejected before flashing or provisioning that identity.
+
 The installer checks chip/flash geometry and security state, backs up all 4 MB, verifies the application signature, then installs the baseline and unique identity. It does not burn eFuses. This is an initial/recovery operation: it replaces flash contents. Existing profile credentials are reused; application settings are initialized. Use OTA for routine updates.
+
+Initial installation writes an explicit valid `ota_0` boot record. The next USB
+update can safely identify its inactive slot, and the first OTA trial has a
+previous baseline record. The other application slot remains empty until an update.
 
 1. Open `.local/device.json` locally to find the generated hotspot and administrator passwords. Do not paste this file into an issue or commit it.
 2. Join the `203-XXXXXX` hotspot. Its console is `https://192.168.4.1`.

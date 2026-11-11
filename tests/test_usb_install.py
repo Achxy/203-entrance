@@ -4,13 +4,36 @@ import sys
 import unittest
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
-from usb_install import HealthyBoot, plan, newer, signed_image_size
+from usb_install import HealthyBoot, initial_boot_record, plan, newer, signed_image_size
 
 class USBInstallTests(unittest.TestCase):
+    def test_initial_baseline_supports_next_update_and_failed_trial_fallback(self):
+        flash = bytearray(b'\xff' * 0x400000)
+        flash[0x8000:0x8004] = b'test'
+        flash[0x10000:0x11000] = initial_boot_record()
+        operation = plan(flash, b'test')
+        self.assertEqual(operation['active_slot'], 0)
+        self.assertEqual(operation['destination_slot'], 1)
+        self.assertEqual(operation['metadata_offset'], 0x11000)
+        flash[0x11000:0x12000] = operation['metadata']
+        struct.pack_into('<I', flash, 0x11018, 1)  # Pending OTA trial.
+        with self.assertRaises(ValueError): plan(flash, b'test')
+        struct.pack_into('<I', flash, 0x11018, 3)  # Invalid candidate.
+        self.assertEqual(plan(flash, b'test')['active_slot'], 0)
+
     def test_continuous_expected_healthy_boot(self):
         check=HealthyBoot('0.2.0')
         for uptime, expected in ((15000,False),(30000,False),(45000,True)):
             self.assertEqual(check.observe(dict(version='0.2.0',uptime_ms=uptime,services=True,trial=False)),expected)
+
+    def test_startup_initialization_precedes_continuous_health(self):
+        check = HealthyBoot('0.2.0')
+        self.assertFalse(check.observe(dict(version='0.2.0',uptime_ms=200,services=False,trial=False)))
+        for uptime, expected in ((15000,False),(30000,False),(45000,True)):
+            self.assertEqual(check.observe(dict(version='0.2.0',uptime_ms=uptime,services=True,trial=False)),expected)
+        overdue = HealthyBoot('0.2.0')
+        with self.assertRaises(ValueError):
+            overdue.observe(dict(version='0.2.0',uptime_ms=30000,services=False,trial=False))
 
     def test_restart_unhealthy_wrong_version_and_stale_boot_fail(self):
         good=dict(version='0.2.0',uptime_ms=15000,services=True,trial=False)

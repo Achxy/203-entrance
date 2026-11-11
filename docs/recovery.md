@@ -21,6 +21,12 @@ press RESET or reconnect if the cable disappeared during that recovery attempt.
 
 Keep an encrypted offline copy of `.local/keys/`, `.local/device.json`, `.local/devices/`, the original flash backup and the matching metadata. The profile contains the hotspot and administrator passwords and certificate pin. Copy the whole set together because the profile references its certificate and key files. Preserve the original files when moving paths; edit the private profile paths to their restored locations.
 
+With multiple boards, pass `--device-profile PATH` to select the matching private
+profile explicitly. Keep original-flash backups and metadata associated with the
+board MAC recorded by the backup command. Share the project signing key between
+compatible project devices, while preserving each device's own credentials and
+certificate. Do not replace one board's profile with another to bypass a MAC check.
+
 A release application alone cannot recreate device credentials. Recovery artifacts and signing keys are deliberately excluded from the public repository and releases.
 
 ## Local management and rollback
