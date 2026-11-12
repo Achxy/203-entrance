@@ -23,6 +23,6 @@ void caption_row(unsigned index, unsigned width, unsigned height, unsigned y, ui
     for (unsigned x = 0; x < ink_width; x++) {
         unsigned column = x / scale, ch = (unsigned char)text[column / 8];
         if (font8x8_basic[ch][glyph_y] & (1u << (column % 8)))
-            out[left + x] = 0xf800;
+            out[left + x] = 0xffff;
     }
 }

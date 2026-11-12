@@ -9,7 +9,7 @@ retains its separate 12 KiB allowance.
 
 The landscape display retains the exact 40-row header area and one-row yellow
 divider at row 40. A fixed **203** replaces the former three rotating messages.
-The original bitmap font is scaled 4× without smoothing: the red RGB565 `0xF800`
+The original bitmap font is scaled 4× without smoothing: the white RGB565 `0xFFFF`
 ink occupies x=36–123 and y=6–33, centered horizontally and vertically. The Neko
 pixels and scaling below the divider are unchanged. This label does not
 implement or change any unlocking or game behavior.

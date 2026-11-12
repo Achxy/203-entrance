@@ -29,7 +29,7 @@ try {
    const ink=[];
    for(let y=0;y<header;y++)for(let x=0;x<w;x++){
     const color=pixels.readUInt16LE((y*w+x)*2);
-    assert.ok(color===0||color===0xf800,'Header contains only black and vibrant red');
+    assert.ok(color===0||color===0xffff,'Header contains only black and white');
     if(color)ink.push([x,y]);
    }
    assert.deepEqual([Math.min(...ink.map(p=>p[0])),Math.max(...ink.map(p=>p[0])),Math.min(...ink.map(p=>p[1])),Math.max(...ink.map(p=>p[1]))],rot?[36,123,6,33]:[20,107,11,38],'Visible number is centered inside the existing header');

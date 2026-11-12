@@ -7,6 +7,11 @@ open. The earlier OTA foundation results do not establish these new gates.
 
 ## Room-number header installed in RC12
 
+The owner subsequently requested white lettering. RC14 changes the ink to
+RGB565 `0xFFFF` and the matching browser preview to white, retaining the exact
+font, size, position, divider and Neko frames. That follow-up is pending
+hardware installation; the following RC12 observations describe the red ink.
+
 The owner's later request replaces the three rotating captions with a fixed
 red `203`, using the same bitmap font at 4× integer scale. The landscape header
 remains exactly rows 0–39, its yellow divider remains row 40, and the visible

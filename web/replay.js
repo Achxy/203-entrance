@@ -31,7 +31,7 @@
       for (let y = 0; y < inkHeight; y++) for (let x = 0; x < inkWidth; x++) {
         const column = Math.floor(x / scale), ch = messages[0].charCodeAt(Math.floor(column / 8));
         if (font[ch * 8 + Math.floor(y / scale)] & 1 << (column % 8))
-          im.data.set([255,0,0,255], ((textTop + y) * w + textLeft + x) * 4);
+          im.data.set([255,255,255,255], ((textTop + y) * w + textLeft + x) * 4);
       }
       for (let x = 0; x < w; x++) im.data.set([255, 255, 0, 255], (header * w + x) * 4);
       ctx.putImageData(im, 0, 0);
