@@ -2,6 +2,10 @@
 
 A local developer console and signed OTA update system for an ESP32-C3 Super Mini with 4 MB flash. The device hosts a unique password-protected Wi-Fi network. Optional station Wi-Fi enables public GitHub release downloads; local management needs no Internet connection.
 
+A separate [USB-to-Wi-Fi maintenance hub](hub/README.md) lets a spare ESP32
+reach the installed display while the Mac keeps its Internet Wi-Fi connection.
+The existing CLI still verifies the display's HTTPS certificate and image signatures.
+
 **Qualification is in progress.** Consult [the hardware validation record](docs/validation.md) for measured results and open acceptance gates. A successful build or simulated test does not establish hardware stability.
 
 ## What is included

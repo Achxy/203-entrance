@@ -1,4 +1,7 @@
 import http.client
+import hashlib
+import json
+import ssl
 import sys
 import unittest
 from pathlib import Path
@@ -58,6 +61,37 @@ class UploadRecoveryTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     device.write_chunk("ticket", 0, b"data")
                 self.assertEqual(device.request.call_count, 2)
+
+
+class TLSPinningTests(unittest.TestCase):
+    def test_smaller_handshake_retains_ca_and_pin_checks(self):
+        certificate = b'test-device-certificate'
+        for tls12 in (False, True):
+            for matching in (False, True):
+                with self.subTest(tls12=tls12, matching=matching):
+                    profile = {'host': '127.0.0.1:18443', 'certificate': 'device.pem',
+                               'certificate_sha256': hashlib.sha256(certificate).hexdigest()
+                               if matching else '0' * 64}
+                    context = Mock(maximum_version=ssl.TLSVersion.MAXIMUM_SUPPORTED)
+                    connection = Mock()
+                    connection.sock.getpeercert.return_value = certificate
+                    response = connection.getresponse.return_value
+                    response.status = 200
+                    response.read.return_value = b'{"ok":true}'
+                    with patch('entrance.PROFILE', Mock(read_text=lambda: json.dumps(profile))), \
+                         patch('entrance.ssl.create_default_context', return_value=context) as factory, \
+                         patch('entrance.http.client.HTTPSConnection', return_value=connection):
+                        device = Device(tls12=tls12)
+                        if matching:
+                            self.assertEqual(device.request('GET', '/status'), {'ok': True})
+                        else:
+                            with self.assertRaisesRegex(ValueError, 'certificate pin changed'):
+                                device.request('POST', '/session', {'password': 'never-sent'})
+                            connection.request.assert_not_called()
+                            connection.close.assert_called_once()
+                        factory.assert_called_once_with(cafile='device.pem')
+                        self.assertEqual(context.maximum_version, ssl.TLSVersion.TLSv1_2
+                                         if tls12 else ssl.TLSVersion.MAXIMUM_SUPPORTED)
 
 
 if __name__ == "__main__":

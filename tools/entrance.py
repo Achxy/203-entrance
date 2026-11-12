@@ -438,16 +438,21 @@ class APIError(RuntimeError):
 
 
 class Device:
-    def __init__(self, host=None):
+    def __init__(self, host=None, *, tls12=False):
         self.profile = json.loads(PROFILE.read_text())
         self.host = host or self.profile["host"]
         self.token = None
         self.connection = None
         self.recovered_chunks = 0
+        self.tls12 = tls12
 
     def request(self, method, path, body=None, *, ticket=None, headers=None, authenticated=True, timeout=20, raw=False):
         if self.connection is None or self.connection.sock is None:
             context = ssl.create_default_context(cafile=self.profile["certificate"])
+            if self.tls12:
+                # Optional smaller ClientHello for the TLS-1.2-only MCU server.
+                # CA validation and the independent certificate pin stay mandatory.
+                context.maximum_version = ssl.TLSVersion.TLSv1_2
             # Identity is additionally pinned, so DHCP station addresses are also usable.
             context.check_hostname = False
             connection = http.client.HTTPSConnection(self.host, timeout=timeout, context=context)
@@ -547,7 +552,7 @@ class Device:
 
 
 def cmd_status(args):
-    device = Device(args.host)
+    device = Device(args.host, tls12=getattr(args, "tls12", False))
     device.login()
     print(json.dumps(device.request("GET", "/api/v1/status"), indent=2))
 
@@ -556,7 +561,7 @@ def cmd_upload(args):
     binary = Path(args.image).resolve()
     metadata = image_metadata(binary)
     tool("espsecure", "verify-signature", "--version", "2", "--keyfile", PUBLIC_KEY, binary)
-    device = Device(args.host)
+    device = Device(args.host, tls12=getattr(args, "tls12", False))
     device.login()
     start = device.request("POST", "/api/v1/ota/start", {"size": metadata["size"], "sha256": metadata["sha256"]})
     ticket = start["ticket"]
@@ -587,7 +592,7 @@ def cmd_upload(args):
 
 
 def cmd_network(args):
-    device = Device(args.host)
+    device = Device(args.host, tls12=getattr(args, "tls12", False))
     device.login()
     if args.disable:
         value = {"ssid": "", "password": "", "enabled": False}
@@ -599,7 +604,7 @@ def cmd_network(args):
 
 
 def cmd_check(args):
-    device = Device(args.host)
+    device = Device(args.host, tls12=getattr(args, "tls12", False))
     device.login()
     body = {"version": validate_version(args.version)} if args.version else None
     device.request("POST", "/api/v1/releases/check", body)
@@ -617,7 +622,7 @@ def cmd_check(args):
 
 
 def cmd_install(args):
-    device = Device(args.host)
+    device = Device(args.host, tls12=getattr(args, "tls12", False))
     device.login()
     release = device.request("GET", "/api/v1/releases")
     if not release.get("verified"):
@@ -627,7 +632,7 @@ def cmd_install(args):
 
 
 def cmd_rollback(args):
-    device = Device(args.host)
+    device = Device(args.host, tls12=getattr(args, "tls12", False))
     device.login()
     before = device.request("GET", "/api/v1/status")
     device.request("POST", "/api/v1/ota/rollback")
@@ -646,7 +651,7 @@ def cmd_rollback(args):
 
 
 def cmd_diagnostics(args):
-    device = Device(args.host)
+    device = Device(args.host, tls12=getattr(args, "tls12", False))
     device.login()
     data = device.request("GET", "/api/v1/diagnostics")
     destination = Path(args.output)
@@ -789,7 +794,7 @@ def cmd_soak(args):
                     if time.monotonic() - last_sample > 45:
                         raise TimeoutError("No paired health/display telemetry for 45 seconds")
         else:
-            device = Device(args.host)
+            device = Device(args.host, tls12=getattr(args, "tls12", False))
             device.login()
             renewed = time.monotonic()
             while True:
@@ -813,7 +818,7 @@ def cmd_soak(args):
 
 
 def cmd_display(args):
-    device = Device(args.host)
+    device = Device(args.host, tls12=getattr(args, "tls12", False))
     device.login()
     body = {key: value for key in ("mode", "profile", "rotation", "inverted", "replay_chapter")
             if (value := getattr(args, key)) is not None}
@@ -823,7 +828,7 @@ def cmd_display(args):
 
 
 def cmd_arcade(args):
-    device = Device(args.host)
+    device = Device(args.host, tls12=getattr(args, "tls12", False))
     device.login()
     path = "/api/v1/arcade"
     if args.action != "status":
@@ -833,7 +838,7 @@ def cmd_arcade(args):
 
 
 def cmd_relay(args):
-    device = Device(args.host)
+    device = Device(args.host, tls12=getattr(args, "tls12", False))
     device.login()
     path = "/api/v1/arcade/relay"
     current = device.request("GET", path)
@@ -860,7 +865,7 @@ def cmd_media(args):
         if args.action == "info":
             print(json.dumps(metadata, indent=2))
             return
-    device = Device(args.host)
+    device = Device(args.host, tls12=getattr(args, "tls12", False))
     device.login()
     if args.action == "upload":
         expected = hashlib.sha256(data).hexdigest()
@@ -902,6 +907,7 @@ def main():
             p.add_argument("--port")
         if name in {"status", "upload", "network", "check", "install", "rollback", "diagnostics", "soak", "display", "media", "arcade", "relay"}:
             p.add_argument("--host")
+            p.add_argument("--tls12", action="store_true", help="Use a smaller TLS 1.2 handshake; certificate verification and pinning remain required")
         if name in {"provision", "flash", "usb-install", "status", "upload", "network", "check", "install", "rollback", "diagnostics", "soak", "display", "media", "arcade", "relay"}:
             p.add_argument("--device-profile", type=Path, help="Private identity/credentials file for a particular board; default is .local/device.json")
         if name == "build":
