@@ -36,6 +36,11 @@ The spare's earlier hardware validation required a transmit-power cap of
 - Relay diagnostics still reported zero successful connections, 71
   disconnections and an ESP-TLS handshake error. Campus association is not an
   Internet-relay pass. No production update has been performed at this checkpoint.
+- A later management reconnect failed because the hub could no longer find
+  the display hotspot (reason 201). The earlier weak signal and subsequent
+  loss mean that a continuous radio link is **not qualified**. The supervisor
+  remains able to answer USB status and retries association. At the same time,
+  the Mac received HTTP 200 from the public site using its existing interface.
 
 The `--tls12` CLI option is explicit, leaves the default mode unchanged and
 retains CA validation and the independent certificate fingerprint check. The
@@ -50,6 +55,8 @@ corruption and size bounds. Socket-pair tests cover byte-for-byte data,
 reconnects and stale-session isolation. TLS tests verify that a wrong pin
 blocks an administrator request in both default and explicit TLS 1.2 modes.
 The hub compiles using the pinned ESP-IDF with a bounded 8 KiB main stack.
+All four [CI jobs for the implementation](https://github.com/Achxy/203-entrance/actions/runs/43190588980)
+passed, including the separate hub firmware build.
 
 These observations establish a working USB/radio/pinned-HTTPS management
 route. They do not yet establish an OTA transfer through the hub, Internet
