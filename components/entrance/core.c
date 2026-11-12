@@ -3,6 +3,35 @@
 #include <limits.h>
 #include <string.h>
 
+int uplink_retry_delay_ms(bool enabled, bool maintenance, bool trial, uint64_t uptime_ms,
+                          bool *held)
+{
+    if (!enabled || maintenance) {
+        *held = false;
+        return -1;
+    }
+    if (trial && uptime_ms < 45000) {
+        *held = true;
+        return 1000;
+    }
+    if (trial) {
+        /* An updater reachable only through the station still needs a route
+           to confirm before the unchanged 120-second trial deadline. */
+        *held = false;
+        return 0;
+    }
+    if (*held) {
+        *held = false;
+        /* Give the client up to ten seconds to observe confirmation, while
+           keeping the overall station hold bounded to 45 seconds. */
+        if (uptime_ms >= 45000)
+            return 0;
+        uint64_t remaining = 45000 - uptime_ms;
+        return remaining < 10000 ? (int)remaining : 10000;
+    }
+    return 0;
+}
+
 #ifdef ESP_PLATFORM
 #define APP_DESCRIPTOR __attribute__((section(".rodata_custom_desc"), used))
 #else

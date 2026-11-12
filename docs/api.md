@@ -32,6 +32,9 @@ separate from device playback. See [Neko packing and frame verification](neko.md
 
 ## Firmware and management operations
 
+`paused_for_trial` indicates the bounded station-association hold during an
+OTA trial. The saved `enabled` setting remains unchanged.
+
 Network status includes actual `station_mac` and `ap_mac` addresses read from
 the Wi-Fi driver. Register `station_mac` with a campus captive portal. Both
 `station_connected` and the legacy `online` field mean Wi-Fi association plus

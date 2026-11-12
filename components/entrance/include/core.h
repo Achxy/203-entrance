@@ -41,3 +41,6 @@ bool hex_decode(const char *text, uint8_t *output, size_t bytes);
 void hex_encode(const void *data, size_t len, char *output);
 uint32_t record_crc(const void *data, size_t len);
 bool descriptor_compatible(const entrance_descriptor_t *descriptor);
+/* -1 stops, 0 connects now, positive values defer station association. */
+int uplink_retry_delay_ms(bool enabled, bool maintenance, bool trial, uint64_t uptime_ms,
+                          bool *held);

@@ -24,6 +24,8 @@ jobs:
         run: ./entrance test
       - name: Validate recovery/security configuration
         run: ./entrance audit
+      - name: Exercise the pinned SDK certificate verifier
+        run: .tools/idf-tools/python_env/idf6.1_py3.12_env/bin/python tools/check_tls_bundle.py
       - name: Build the separate USB-to-Wi-Fi maintenance hub
         run: ./hubctl build
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

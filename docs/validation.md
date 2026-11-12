@@ -4,7 +4,7 @@
 
 The scope now also includes phone-controlled games, the public site, Clerk
 identity/guest records and an Internet relay. See the [arcade checkpoint](arcade/validation.md)
-for the installed RC9 image, production web checks, campus relay timeout and
+for the installed RC12 image, production web checks, campus TLS diagnosis and
 the explicit prohibition on further laptop Wi-Fi switching.
 
 ## Hardware and preservation

@@ -90,3 +90,24 @@ open stream or replays application data. Recovery rejoined after the failed
 trial, but did not rescue that trial. All 75 host tests pass, including bounds
 and error classification for this recovery. Laptop network settings remain
 unchanged. Campus Internet gameplay and the final 60-minute soak remain open.
+
+
+### Successful RC12 installation
+
+With explicit approval, the display's open-network uplink was temporarily
+paused for one further trial. The signed RC12 image transferred, rebooted,
+received fresh confirmation tickets and confirmed healthy at 33.2 seconds.
+The script restored the saved campus configuration immediately afterward;
+subsequent status reported association, valid time and healthy settings.
+The fixed red `203` caption and advancing Neko frame/loop counters are reported
+by RC12. RC9 remains a valid rollback target. The actual station/AP addresses
+match the original fixed factory identities in private records.
+
+This isolates uplink activity during trial startup as a material factor in the
+failed reconnects. It does not establish a particular RF or channel-switch
+mechanism. Follow-up firmware gives hotspot confirmation a 45-second head start,
+then resumes the station even if an updater reachable only over the uplink
+still needs to confirm. Earlier confirmation resumes the station after an
+observation grace of up to 10 seconds, without rewriting settings.
+The uplink restoration, signature checks and healthy trial all used the USB
+hub; the laptop's network settings remained unchanged.

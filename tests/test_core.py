@@ -37,6 +37,9 @@ class CoreTests(unittest.TestCase):
         cls.lib.constant_equal.restype = ctypes.c_bool
         cls.lib.descriptor_compatible.argtypes = [ctypes.POINTER(Descriptor)]
         cls.lib.descriptor_compatible.restype = ctypes.c_bool
+        cls.lib.uplink_retry_delay_ms.argtypes = [ctypes.c_bool, ctypes.c_bool, ctypes.c_bool, ctypes.c_uint64,
+                                                 ctypes.POINTER(ctypes.c_bool)]
+        cls.lib.uplink_retry_delay_ms.restype = ctypes.c_int
 
     @classmethod
     def tearDownClass(cls):
@@ -56,6 +59,38 @@ class CoreTests(unittest.TestCase):
 
     def test_build_metadata_does_not_allow_reinstall(self):
         self.assertEqual(self.compare("1.0.0+one", "1.0.0+two"), (0, True))
+
+    def test_uplink_waits_for_trial_and_confirmation_observation(self):
+        held = ctypes.c_bool(False)
+        decision = self.lib.uplink_retry_delay_ms
+        self.assertEqual(decision(True, False, False, 0, ctypes.byref(held)), 0)
+        for uptime in range(0, 33000, 250):
+            self.assertEqual(decision(True, False, True, uptime, ctypes.byref(held)), 1000)
+            self.assertTrue(held.value)
+        self.assertEqual(decision(True, False, False, 33000, ctypes.byref(held)), 10000)
+        self.assertFalse(held.value)
+        self.assertEqual(decision(True, False, False, 43000, ctypes.byref(held)), 0)
+
+    def test_station_only_confirmer_gets_route_before_trial_deadline(self):
+        held = ctypes.c_bool(False)
+        decision = self.lib.uplink_retry_delay_ms
+        self.assertEqual(decision(True, False, True, 44999, ctypes.byref(held)), 1000)
+        self.assertEqual(decision(True, False, True, 45000, ctypes.byref(held)), 0)
+        self.assertFalse(held.value)
+        self.assertEqual(decision(True, False, True, 119000, ctypes.byref(held)), 0)
+        self.assertEqual(decision(True, False, False, 119500, ctypes.byref(held)), 0)
+        held.value = True
+        self.assertEqual(decision(True, False, False, 44000, ctypes.byref(held)), 1000)
+        held.value = True
+        self.assertEqual(decision(True, False, False, 45000, ctypes.byref(held)), 0)
+
+    def test_disabled_and_maintenance_uplink_never_resumes_from_trial(self):
+        decision = self.lib.uplink_retry_delay_ms
+        for enabled, maintenance in ((False, False), (False, True), (True, True)):
+            held = ctypes.c_bool(True)
+            for trial in (True, False):
+                self.assertEqual(decision(enabled, maintenance, trial, 46000, ctypes.byref(held)), -1)
+                self.assertFalse(held.value)
 
     def test_malformed_versions(self):
         for value in ["", "1", "1.2", "1.2.3.4", "01.2.3", "1.02.3", "1.2.03", "1.2.3-", "1.2.3+", "1.2.3-a..b", "1.2.3-01", "1.2.3+a.", "1.2.3+a..b", "1.2.3\n", "4294967296.0.0", "1.0.0/evil", "1.0.0-" + "a" * 30]:

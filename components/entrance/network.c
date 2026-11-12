@@ -17,13 +17,25 @@ static SemaphoreHandle_t network_mutex;
 static portMUX_TYPE ip_mutex = portMUX_INITIALIZER_UNLOCKED;
 static esp_timer_handle_t reconnect_timer;
 static unsigned failures;
+static _Atomic bool trial_uplink_held;
 static char station_ip[20] = "offline";
 
 static void reconnect(void *arg)
 {
     (void)arg;
-    if (station_enabled && !maintenance)
+    if (xSemaphoreTake(network_mutex, 0) != pdTRUE) {
+        esp_timer_start_once(reconnect_timer, 1000000);
+        return;
+    }
+    bool held = trial_uplink_held;
+    int delay = uplink_retry_delay_ms(station_enabled, maintenance, ota_trial(),
+                                     esp_timer_get_time() / 1000, &held);
+    trial_uplink_held = held;
+    if (delay > 0)
+        esp_timer_start_once(reconnect_timer, (uint64_t)delay * 1000);
+    else if (delay == 0)
         esp_wifi_connect();
+    xSemaphoreGive(network_mutex);
 }
 
 static void event(void *arg, esp_event_base_t base, int32_t id, void *data)
@@ -73,6 +85,7 @@ esp_err_t net_apply(void)
     settings_t snapshot = settings_snapshot();
     station_enabled = snapshot.enabled && (!arcade_guest_network() || relay_enabled());
     esp_timer_stop(reconnect_timer);
+    trial_uplink_held = false;
     online = false;
     esp_wifi_disconnect();
     if (!station_enabled || maintenance) {
@@ -90,8 +103,17 @@ esp_err_t net_apply(void)
     config.sta.failure_retry_cnt = 2;
     config.sta.pmf_cfg.capable = true;
     esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &config);
-    if (err == ESP_OK)
-        err = esp_wifi_connect();
+    if (err == ESP_OK) {
+        bool held = false;
+        int delay = uplink_retry_delay_ms(station_enabled, maintenance, ota_trial(),
+                                         esp_timer_get_time() / 1000, &held);
+        trial_uplink_held = held;
+        if (delay > 0) {
+            err = esp_timer_start_once(reconnect_timer, (uint64_t)delay * 1000);
+            diag_event("Trial boot: hotspot stays on its channel; uplink resumes by 45 seconds");
+        } else if (delay == 0)
+            err = esp_wifi_connect();
+    }
     memset(&config, 0, sizeof(config));
     memset(&snapshot, 0, sizeof(snapshot));
     xSemaphoreGive(network_mutex);
@@ -216,6 +238,7 @@ cJSON *net_status(void)
     }
     cJSON_AddBoolToObject(j, "enabled", snapshot.enabled);
     cJSON_AddBoolToObject(j, "paused_for_arcade", arcade_guest_network() && !relay_enabled());
+    cJSON_AddBoolToObject(j, "paused_for_trial", trial_uplink_held);
     cJSON_AddNumberToObject(j, "settings_generation", snapshot.generation);
     cJSON_AddNumberToObject(j, "settings_schema", snapshot.schema);
     cJSON_AddBoolToObject(j, "online", online);
@@ -228,9 +251,10 @@ cJSON *net_status(void)
                          : (arcade_guest_network() && !relay_enabled())
                              ? "Uplink paused for local arcade play"
                          : maintenance ? "Disabled in maintenance mode"
+                         : trial_uplink_held ? "Trial: hotspot prioritized briefly; uplink resumes by 45 seconds"
                          : online      ? "Wi-Fi connected; Internet access is checked separately"
                                        : "Connecting; local hotspot remains available";
-    if (snapshot.enabled && !online && !maintenance &&
+    if (snapshot.enabled && !online && !maintenance && !trial_uplink_held &&
         (!arcade_guest_network() || relay_enabled())) {
         if (disconnect_reason == WIFI_REASON_NO_AP_FOUND)
             status = "Network not found; check its name and 2.4 GHz band";

@@ -718,13 +718,19 @@ def cmd_audit(args):
     # edited sdkconfig belonging to a future build.
     configuration = json.loads((ROOT / "build/config/sdkconfig.json").read_text())
     for option in ("SECURE_BOOT", "SECURE_FLASH_ENC_ENABLED", "BOOTLOADER_APP_ANTI_ROLLBACK",
-                   "SECURE_DISABLE_ROM_DL_MODE", "SECURE_ENABLE_SECURE_ROM_DL_MODE"):
+                   "SECURE_DISABLE_ROM_DL_MODE", "SECURE_ENABLE_SECURE_ROM_DL_MODE",
+                   "ESP_TLS_INSECURE", "ESP_TLS_SKIP_SERVER_CERT_VERIFY",
+                   "MBEDTLS_ALLOW_WEAK_CERTIFICATE_VERIFICATION"):
         if configuration.get(option) is True:
             raise ValueError(f"Recovery policy violation: {option}")
     for option in ("SECURE_SIGNED_APPS_NO_SECURE_BOOT", "SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT",
                    "SECURE_SIGNED_APPS_RSA_SCHEME", "BOOTLOADER_APP_ROLLBACK_ENABLE",
                    "ESP_COREDUMP_ENABLE_TO_FLASH", "ESPTOOLPY_FLASHSIZE_4MB",
-                   "ESP_TASK_WDT_EN", "ESP_TASK_WDT_INIT", "ESP_TASK_WDT_PANIC", "MBEDTLS_DYNAMIC_BUFFER"):
+                   "ESP_TASK_WDT_EN", "ESP_TASK_WDT_INIT", "ESP_TASK_WDT_PANIC", "MBEDTLS_DYNAMIC_BUFFER",
+                   "MBEDTLS_HAVE_TIME_DATE", "MBEDTLS_CERTIFICATE_BUNDLE",
+                   "MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL",
+                   "MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY",
+                   "MBEDTLS_X509_TRUSTED_CERT_CALLBACK"):
         if configuration.get(option) is not True:
             raise ValueError(f"Required firmware policy missing: {option}")
     if configuration.get("CJSON_NESTING_LIMIT") != 8:

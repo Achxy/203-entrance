@@ -5,7 +5,7 @@ and relay are deployed, and the signed arcade firmware is installed. Actual
 phone-to-display Internet play and a final continuous operating soak remain
 open. The earlier OTA foundation results do not establish these new gates.
 
-## Prepared room-number header
+## Room-number header installed in RC12
 
 The owner's later request replaces the three rotating captions with a fixed
 red `203`, using the same bitmap font at 4× integer scale. The landscape header
@@ -14,18 +14,18 @@ red ink is centered at x=36–123, y=6–33. No game source or Neko asset change
 All 144 C/browser raster comparisons pass. An aggregate digest captured from
 the preceding firmware confirms that the divider and every pixel below it
 remain byte-identical across all 24 frames and both orientations. The 68 host
-tests also pass. These are local checks; the new header is **not yet installed**
-on the inaccessible display.
+tests also pass. These raster checks are local. RC12 subsequently confirmed through the USB
+hub; its status reports the fixed caption and advancing Neko frames.
 
-The next firmware also reports `station_mac`, `ap_mac` and the explicitly named
+RC12 also reports `station_mac`, `ap_mac` and the explicitly named
 `station_connected` network status field. Inspection of the installed source,
 ESP-IDF's interface mapping and the original USB chip records confirms the
 factory-derived, fixed station MAC policy; no application code overrides or
-randomizes MAC addresses. Actual driver addresses will be visible in the next
-firmware's authenticated status response. The legacy `network.online` field
+randomizes MAC addresses. The authenticated RC12 status response confirms that both actual driver
+addresses match the original factory identities. The legacy `network.online` field
 means DHCP connectivity, not verified campus Internet access.
 
-## Prepared relay failover (RC12)
+## Installed relay failover (RC12)
 
 The RC12 candidate retains the fixed red room number and adds bounded relay
 address failover. On 12 November, two IPv4 answers for the relay hostname had
@@ -48,23 +48,27 @@ radio/TLS behavior or the OTA quiescence deadline on hardware.
 The owner submitted the fixed station MAC to iBus; the registered-address list
 contains the correct value. The portal displays all entries without colons,
 so that display format is not evidence of a registration error. Subsequent
-public relay status still says offline, and a single TCP probe to the ESP's
-last campus IP timed out. The laptop's Wi-Fi and network settings were not
-changed. RC12 has **not been installed**. The game relay intentionally provides
-no administrator or OTA tunnel; a local management route is still needed to
-install the candidate. The continuous operating soak and real Internet game
-qualification cannot be claimed from these local tests.
+public relay still reports offline. RC12 now resolves both relay addresses,
+but both encounter certificate-verification failure. A host build of the
+exact pinned SDK reproduced the same `-0x3000` error with the genuine public
+relay chain. Its cross-signature ends at a removed legacy root even though
+the current root is trusted. Enabling Espressif's cross-signed bundle option
+accepts the chain while preserving trust and hostname checks. See the
+[TLS qualification record](tls-qualification.md). The final Internet game and
+continuous operating soak gates remain open.
 
 ## Installed display
 
-The second ESP32-C3, `entrance-c7f088`, confirmed signed `0.3.0-rc.9` through
-the actual hotspot OTA protocol. The image is 1,314,816 bytes including
-signature padding, leaving 651,264 bytes in each unchanged application slot.
-The update wrote the inactive slot, rebooted, accepted fresh updater contact
-and passed the healthy trial. RC8 remains a valid rollback target. No USB
-reflash or eFuse change occurred.
+The installed display confirmed signed **0.3.0-rc.12** over the independent
+USB-to-Wi-Fi hub on 12 November. Two earlier complete uploads safely rolled
+back after updater contact was lost during boot. With owner approval to pause
+the display's campus uplink temporarily, the next trial confirmed at 33.2 s.
+The script restored the saved campus configuration immediately afterward;
+subsequent status confirmed association, valid time, unchanged device identity,
+healthy settings and advancing Neko frames. RC9 remains a valid rollback target.
+No laptop networking, USB production flash or eFuse change was involved.
 
-RC9 upload took 62.76 seconds. Subsequent certificate-pinned administrator
+The following RC9 measurements remain historical evidence. RC9 upload took 62.76 seconds. Subsequent certificate-pinned administrator
 login took 27.83 seconds including TLS. Embedded Neko readback matched the
 source ECL1 byte-for-byte. The short post-installation window measured 10.56
 redraws/second, including independent caption redraws. Settings and panel
@@ -130,7 +134,7 @@ Android/iPhone game-controller testing is outstanding.
 
 | Gate | Status |
 |---|---|
-| Real ESP-to-relay encrypted authentication | Blocked by the observed connection timeout |
+| Real ESP-to-relay encrypted authentication | RC12 resolves two addresses; certificate-chain correction prepared and tested locally |
 | Internet Tetris, solo Pong, two-human Pong and Pac-Man | Requires the real device relay connection |
 | Real disconnect/reconnect and hostile-client tests | Protocol tests pass; hardware cases remain |
 | Google-verified physical visit and receipt sync | Web sign-in/pass and existing guest log verified; end-to-end admission remains |
@@ -141,9 +145,8 @@ Android/iPhone game-controller testing is outstanding.
 | Stable release and final recovery bundle | Pending final qualification |
 
 The owner has prohibited switching the laptop's Wi-Fi for further tests. The
-connection helpers were stopped. Further hardware qualification needs an
-operational outbound route or an independent management interface that leaves
-the laptop online. Do not retry automatic hotspot switching or infer approval
+connection helpers were stopped. The USB hub now supplies the independent management interface; outbound
+relay connectivity remains under qualification. Do not retry automatic hotspot switching or infer approval
 from the earlier test scripts.
 
 Private raw evidence is under `.local/qualification/c7f088/reports/` and
