@@ -64,3 +64,29 @@ gameplay, physical power-loss behavior or the final 60-minute operating soak.
 The signed RC12 candidate remains available for the separately approved
 production installation. The proxy must remain running for OTA confirmation
 and monitoring; USB loss fails the connection rather than changing Mac Wi-Fi.
+
+
+## RC12 trial attempts through the hub
+
+After explicit owner approval on 12 November, two complete RC12 uploads
+transferred all 1,314,816 bytes and passed image verification. Both selected
+the inactive application and rebooted, but neither received updater contact
+during its trial. Authenticated/ticket-scoped reads subsequently confirmed
+that the device restored healthy RC9. RC12 is marked invalid; the preserved
+running RC9 slot is valid. These are safe rollback observations, **not a
+successful RC12 installation**.
+
+The USB tunnel reported zero corrupt frames. Initially its radio signal was
+approximately −91 dBm. Moving the spare improved it to about −71 dBm, and
+three authenticated status requests completed with advancing animation.
+The following upload still lost hotspot discovery at reboot (reason 201).
+Signal after recovery was again weak. This does not establish whether the
+cause is channel behavior, trial maintenance state, interference or another
+firmware issue. Further isolation is required before another update.
+
+The host supervisor now refreshes only the spare's association after three
+consecutive failed TCP opens, at most once per minute. It never interrupts an
+open stream or replays application data. Recovery rejoined after the failed
+trial, but did not rescue that trial. All 75 host tests pass, including bounds
+and error classification for this recovery. Laptop network settings remain
+unchanged. Campus Internet gameplay and the final 60-minute soak remain open.

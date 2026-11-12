@@ -76,6 +76,10 @@ own integrity/offset rules. A new client opens a fresh stream after a display
 reboot; the existing OTA CLI reconnects and confirms the trial automatically.
 
 The hub retries Wi-Fi association without changing the laptop's connection.
+Three consecutive failed TCP opens also trigger a fresh association of only
+the hub's radio, at most once per minute. This recovers stale associations
+across display reboots/channel changes. An open stream is never interrupted
+by this recovery, and application requests are never replayed by the hub.
 The supervisor polls bounded status every two seconds. The status file contains
 the hub MAC, IP, signal, uptime, heap, byte counters and corrupt-frame count;
 it contains no Wi-Fi or administrator password. Initial association has a

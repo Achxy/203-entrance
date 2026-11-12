@@ -15,6 +15,24 @@ import usb_wifi_hub as hub
 
 
 class HubFrameTests(unittest.TestCase):
+    def test_link_recovery_is_bounded_and_only_for_connect_failures(self):
+        recovery = hub.LinkRecovery()
+        self.assertFalse(recovery.failed('tcp_connect_failed', 0))
+        self.assertFalse(recovery.failed('tcp_connect_failed', 1))
+        self.assertTrue(recovery.failed('tcp_connect_failed', 2))
+        for at in range(3, 62):
+            self.assertFalse(recovery.failed('wifi_not_ready_or_invalid_target', at))
+        self.assertTrue(recovery.failed('tcp_connect_failed', 62))
+        recovery.opened()
+        self.assertFalse(recovery.failed('tcp_connect_failed', 125))
+        self.assertFalse(recovery.failed('tcp_connect_failed', 126))
+        self.assertFalse(recovery.failed('socket_allocation_failed', 127))
+        self.assertFalse(recovery.failed('tcp_connect_failed', 128))
+        recovery.opened()
+        self.assertFalse(recovery.failed('tcp_connect_failed', 129))
+        self.assertFalse(recovery.failed('tcp_connect_failed', 130))
+        self.assertTrue(recovery.failed('tcp_connect_failed', 131))
+
     def test_proxy_bytes_reconnect_and_session_isolation(self):
         class SerialDouble:
             def __init__(self, **_kwargs):

@@ -25,6 +25,33 @@ HEADER = struct.Struct('<4sBBHII')
 HELLO, JOIN, OPEN, DATA, ACK, CLOSE, SCAN = range(1, 8)
 
 
+class HubCommandError(ConnectionError):
+    def __init__(self, reason):
+        self.reason = reason
+        super().__init__(reason)
+
+
+class LinkRecovery:
+    """Bound recovery to failed TCP opens; never replay application traffic."""
+    def __init__(self):
+        self.failures = 0
+        self.retry_after = 0
+
+    def opened(self):
+        self.failures = 0
+
+    def failed(self, reason, now):
+        if reason not in ('tcp_connect_failed', 'wifi_not_ready_or_invalid_target'):
+            self.failures = 0
+            return False
+        self.failures += 1
+        if self.failures < 3 or now < self.retry_after:
+            return False
+        self.failures = 0
+        self.retry_after = now + 60
+        return True
+
+
 def encode(kind, request, payload=b''):
     if len(payload) > MAX_DATA:
         raise ValueError('USB frame exceeds bound')
@@ -109,7 +136,7 @@ class Hub:
                 raise raw
             result = json.loads(raw)
             if result.get('ok') is False:
-                raise ConnectionError(result['reason'])
+                raise HubCommandError(result['reason'])
             return result
         finally:
             with self.lock:
@@ -186,7 +213,7 @@ class Hub:
             time.sleep(1)
         raise TimeoutError(f"Hub Wi-Fi did not connect (reason {state.get('wifi_reason')})")
 
-    def forward(self, client, target, port):
+    def forward(self, client, target, port, on_open=None):
         request = secrets.randbits(32) or 1
         client.settimeout(5)
         with self.lock:
@@ -194,6 +221,8 @@ class Hub:
         try:
             self.rpc(OPEN, ipaddress.IPv4Address(target).packed + struct.pack('!H', port),
                      request=request)
+            if on_open:
+                on_open()
             while not self.closed.is_set() and self.connection == request:
                 readable, _, _ = select.select([client], [], [], .2)
                 if not readable:
@@ -225,6 +254,7 @@ def serve(args):
     hub = Hub(args.port)
     stop = threading.Event()
     active = threading.Lock()
+    recovery = LinkRecovery()
     try:
         identity = hub.rpc(HELLO)
         if identity['mac'].lower() != args.expected_mac.lower():
@@ -248,9 +278,24 @@ def serve(args):
 
         def connection(client):
             try:
-                hub.forward(client, args.target, args.target_port)
+                hub.forward(client, args.target, args.target_port, on_open=recovery.opened)
             except Exception as exc:
-                print('Tunnel connection ended:', str(exc), file=sys.stderr, flush=True)
+                print(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                      'Tunnel connection ended:', str(exc), file=sys.stderr, flush=True)
+                if isinstance(exc, HubCommandError) and recovery.failed(exc.reason, time.monotonic()):
+                    # No active stream exists. Refresh only the spare's radio,
+                    # with the single-client lock still held. The caller sees
+                    # a closed stream and owns any safe application retry.
+                    client.close()
+                    print('Refreshing hub Wi-Fi after three failed TCP opens', flush=True)
+                    try:
+                        state = hub.connect_wifi(profile)
+                        if args.status_file:
+                            save_status(args.status_file, state)
+                        print('Hub Wi-Fi rejoined', flush=True)
+                    except Exception as reconnect_error:
+                        print('Hub Wi-Fi refresh failed:', str(reconnect_error),
+                              file=sys.stderr, flush=True)
             finally:
                 client.close()
                 active.release()
