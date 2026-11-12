@@ -1,8 +1,9 @@
 # Certificate-chain correction — 12 November 2026
 
-The installed RC12 resolves two relay addresses but reports an ESP-TLS
-certificate-verification failure (`0x801A`, underlying `-0x3000`). It has not
-established the Internet game connection.
+The preceding RC12 resolved two relay addresses but reported an ESP-TLS
+certificate-verification failure (`0x801A`, underlying `-0x3000`). It had not
+established the Internet game connection at that checkpoint. RC14 subsequently
+passed the hardware authentication check described below.
 
 Both public relay addresses presented the same chain during a verified
 TLS 1.2 inspection from the Mac: the relay leaf, Google Trust Services WE1,
@@ -46,6 +47,16 @@ not-yet-valid, invalid-signature and untrusted-root certificates. Time is
 overridden only inside the test executable; the system clock is not changed.
 CI runs these checks independently of the firmware configuration audit.
 
-The corrective firmware still needs a signed build, healthy hardware trial,
-actual relay authentication and continuous operating qualification. Do not
-count these native tests as an Internet gameplay or stability pass.
+## Installed hardware check
+
+Signed RC14 confirmed healthy at 31.7 seconds. After its automatic trial
+uplink delay, the saved campus connection resumed without changing settings.
+Three authenticated hardware samples reported an online relay, zero TLS
+verification errors and advancing animation. The public relay independently
+reported the display online, including after the USB maintenance hub stopped.
+This establishes a real encrypted, authenticated ESP-to-relay connection.
+
+All four source/tag CI jobs passed, including the seven native verifier
+cases. Physical-phone gameplay, hostile-client hardware checks and the
+continuous 60-minute soak remain open. The short installed check and native
+tests do not establish those acceptance gates.

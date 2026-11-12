@@ -5,6 +5,22 @@ Its factory MAC is distinct from the installed display. The flashing tool
 requires the expected spare MAC and refuses the active production profile.
 Exact device identifiers and campus addresses remain in private evidence. No Mac Wi-Fi, route, DNS or system-proxy setting changed.
 
+## Latest checkpoint: maintenance hub released
+
+RC14 subsequently installed and confirmed healthy through this hub at
+31.7 seconds. It renders the owner's requested white `203` and retains the
+yellow divider, Neko loop and game code. Its automatic trial uplink delay
+allowed reconnection without manually pausing or rewriting campus settings.
+Authenticated post-installation samples verified advancing animation,
+healthy settings, a valid RC12 rollback target and an online Internet relay.
+
+The hub process was then stopped. The public relay still reported the
+production display online through its independent campus connection. The
+spare can be unplugged; no laptop or hub is required for autonomous display
+operation. The owner deferred longer qualification for the day. This is not
+a 60-minute soak or a complete Internet game acceptance result. The older
+checkpoints below retain the unsuccessful attempts and their scope.
+
 ## Preservation and installation
 
 A fresh, complete 4,194,304-byte flash backup was read before erasure and its
