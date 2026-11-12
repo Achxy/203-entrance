@@ -1,9 +1,9 @@
 #include "relay.h"
 #include "relay_frame.h"
+#include "relay_transport.h"
 #include "arcade.h"
 #include "protocol.h"
 #include "esp_websocket_client.h"
-#include "esp_crt_bundle.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/queue.h"
@@ -301,7 +301,7 @@ static void task(void *arg)
 {
     (void)arg;
     esp_websocket_client_handle_t client = NULL;
-    /* The websocket transport retains this pointer for the client's lifetime. */
+    /* URI input for the websocket client; TLS identity is owned by the adapter. */
     char client_host[sizeof(config.host)] = {0};
     unsigned failures = 0;
     uint64_t next = 0, started = 0, pulse = 0, public_at = 0;
@@ -329,6 +329,7 @@ static void task(void *arg)
             arcade_relay_disconnected();
             esp_websocket_client_stop(client);
             esp_websocket_client_destroy(client);
+            relay_transport_destroy();
             client = NULL;
             client_live = false;
             xQueueReset(incoming);
@@ -360,13 +361,25 @@ static void task(void *arg)
         else if (ota_busy() || pause_users)
             phase = 6;
         if (!client && ready && now >= next && !apply) {
+            /* DNS has its own lwIP timeout. Resolve before taking the live
+               client lease so an unavailable DNS server cannot block OTA. */
+            phase = 9;
+            if (!relay_transport_resolve(snapshot.host)) {
+                phase = 5;
+                next = milliseconds() + (1000ULL << (failures < 6 ? failures++ : 6)) +
+                       (esp_random() % 1000);
+                continue;
+            }
             xSemaphoreTake(mutex, portMAX_DELAY);
-            bool permitted = !pause_users && !ota_busy();
+            bool permitted = !pause_users && !ota_busy() && enabled && net_online() &&
+                             !reconfigure && !strcmp(config.host, snapshot.host);
             if (permitted)
                 client_live = true;
             xSemaphoreGive(mutex);
-            if (!permitted)
+            if (!permitted) {
+                vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
+            }
             char nonce[33], proof[161], proof_message[180], client_headers[384];
             random_hex(nonce, 16);
             long long unix_time = (long long)time(NULL);
@@ -385,9 +398,7 @@ static void task(void *arg)
             strlcpy(client_host, snapshot.host, sizeof(client_host));
             snprintf(uri, sizeof(uri), "wss://%s/v1/device", client_host);
             esp_websocket_client_config_t cfg = {.uri = uri,
-                                                 .headers = client_headers,
-                                                 .cert_common_name = client_host,
-                                                 .crt_bundle_attach = esp_crt_bundle_attach,
+                                                 .ext_transport = relay_transport_create(client_headers),
                                                  .disable_auto_reconnect = true,
                                                  .task_prio = tskIDLE_PRIORITY + 1,
                                                  .task_stack = 6144,
@@ -401,9 +412,10 @@ static void task(void *arg)
             auth_sent = false;
             authenticated = connected = false;
             phase = 3;
-            started = now;
-            client = esp_websocket_client_init(&cfg);
+            started = milliseconds();
+            client = cfg.ext_transport ? esp_websocket_client_init(&cfg) : NULL;
             if (!client) {
+                relay_transport_destroy();
                 client_live = false;
                 phase = 8;
                 next = now + 30000;
@@ -456,12 +468,13 @@ cJSON *relay_status(void)
 {
     static const char *names[] = {
         "disabled", "waiting_for_wifi",  "waiting_for_time",  "connecting",    "online",
-        "retrying", "paused_for_update", "redirect_rejected", "resource_error"};
+        "retrying", "paused_for_update", "redirect_rejected", "resource_error", "resolving"};
     cJSON *j = cJSON_CreateObject();
     cJSON_AddBoolToObject(j, "enabled", enabled);
     cJSON_AddBoolToObject(j, "connected", authenticated && !fatal);
-    unsigned p = phase;
-    cJSON_AddStringToObject(j, "state", p < 9 ? names[p] : "error");
+    unsigned p = relay_transport_redirected() ? 7 : phase;
+    cJSON_AddStringToObject(j, "state", p < 10 ? names[p] : "error");
+    cJSON_AddNumberToObject(j, "resolved_addresses", relay_transport_address_count());
     cJSON_AddNumberToObject(j, "connections", connects);
     cJSON_AddNumberToObject(j, "disconnects", disconnects);
     cJSON_AddNumberToObject(j, "rejected_messages", rejected);

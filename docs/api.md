@@ -39,6 +39,11 @@ DHCP, not proof of Internet access; `relay.connected` reports authenticated
 connectivity to the arcade relay. The firmware uses factory-derived fixed MACs
 and does not randomize or override them.
 
+Relay status includes `resolved_addresses` (0–4) and a `resolving` state. DNS
+success alone does not set `connected`; that requires authenticated WebSocket
+admission. An address failure advances to another current DNS answer on the
+next bounded retry, retaining TLS hostname verification.
+
 Base URL: `https://192.168.4.1/api/v1`. There is no plaintext management endpoint. Responses are JSON except bundled assets and binary clip downloads. Errors have `error` and `message` strings. Authentication errors are 401, origin/ticket failures 403, throttling 429, unknown operations 404 and rejected state/image/settings operations 409. Rejected requests close their connection so unread bodies cannot be mistaken for a subsequent request.
 
 JSON requests use exactly `Content-Type: application/json`, at most 2048 bytes, unique keys and a flat object. Chunk bodies use `application/octet-stream`, at most 8192 bytes. All operations are local to the device; there is no Internet-facing listener configuration.

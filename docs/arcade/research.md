@@ -42,6 +42,32 @@ Internet access. The recorded ESP-TLS code `0x8006` means connection timeout;
 it does not identify a bad certificate or establish whether the captive
 portal, network filtering, packet loss or the connection deadline is responsible.
 
+On 12 November, read-only probes from the Mac's existing campus connection
+found two IPv4 answers for the relay hostname: one timed out at TCP connect;
+the other completed certificate- and hostname-verified TLS 1.2 in about 0.3 s.
+This reproduces an address-specific reachability problem on the campus path,
+but does not prove the ESP currently sees the same DNS order or filtering.
+The installed SDK defaults to one DNS address and ESP-TLS connects only to the
+first `getaddrinfo` result. The candidate adds bounded alternate-address retry,
+preserving hostname verification and the ordinary retry budget.
+
+Enabling multi-address DNS requires the fix for
+[GHSA-ch63-jxm5-vmvf](https://github.com/espressif/esp-idf/security/advisories/GHSA-ch63-jxm5-vmvf).
+The pinned SDK commit in `toolchain.json` contains it: the single-address DNS
+API calls `dns_gethostbyname_addrtype_n(..., 1, ...)`, and `lwip_getaddrinfo`
+supplies `DNS_MAX_HOST_IP` as both its array capacity and explicit requested
+count. The build audit enforces four address slots. Do not backport this
+configuration alone to an SDK lacking the bounds fix.
+
+ESP-TLS's pinned `esp_tls_mbedtls.c` uses `cfg.common_name` for
+`mbedtls_ssl_set_hostname`, retaining SNI and hostname checks when the socket
+dials a numeric address. The original WS transport still receives the DNS
+hostname for its Host header. The external transport API avoids modifying
+SDK internals; a handle-scoped linker wrapper supplies the dial override and
+rejects redirects synchronously. Sanitized host tests exercise failover,
+DNS changes, cleanup failures and unchanged TLS identity arguments. Actual
+ESP handshake and OTA-quiescence testing remain required.
+
 If the campus uplink fails, the ESP keeps hosting **203 IoTitty**. The fallback
 controller is local HTTP reached by a top-level navigation, not insecure fetch
 from an HTTPS page. See [mixed content](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Mixed_content)

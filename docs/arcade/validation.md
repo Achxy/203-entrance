@@ -25,6 +25,36 @@ randomizes MAC addresses. Actual driver addresses will be visible in the next
 firmware's authenticated status response. The legacy `network.online` field
 means DHCP connectivity, not verified campus Internet access.
 
+## Prepared relay failover (RC12)
+
+The RC12 candidate retains the fixed red room number and adds bounded relay
+address failover. On 12 November, two IPv4 answers for the relay hostname had
+different reachability from the Mac's existing campus connection: one TCP
+attempt timed out and the other completed verified TLS in approximately
+0.3 seconds. This is evidence of a campus-path problem and a missing fallback
+in the installed firmware; it is not proof of the ESP's current DNS answers.
+
+All 69 host tests pass. The production transport adapter is compiled with
+address/undefined-behavior sanitizers and tested against controlled DNS and
+transport doubles for failure advance, success preference, reordered/expired
+answers, duplicate/capped records, DNS failure, allocation cleanup, redirect
+rejection, original TLS/HTTP identity and unchanged unrelated transports.
+Disassembly of the built ESP image confirms that both the SDK WebSocket client
+and its underlying WS transport call the scoped connect wrapper. The signed
+candidate builds within the unchanged 1,966,080-byte slot and passes the
+recovery/signature/configuration audit. These checks do not establish actual
+radio/TLS behavior or the OTA quiescence deadline on hardware.
+
+The owner submitted the fixed station MAC to iBus; the registered-address list
+contains the correct value. The portal displays all entries without colons,
+so that display format is not evidence of a registration error. Subsequent
+public relay status still says offline, and a single TCP probe to the ESP's
+last campus IP timed out. The laptop's Wi-Fi and network settings were not
+changed. RC12 has **not been installed**. The game relay intentionally provides
+no administrator or OTA tunnel; a local management route is still needed to
+install the candidate. The continuous operating soak and real Internet game
+qualification cannot be claimed from these local tests.
+
 ## Installed display
 
 The second ESP32-C3, `entrance-c7f088`, confirmed signed `0.3.0-rc.9` through
@@ -78,7 +108,7 @@ a valid substitute for the final RC9 soak.
 
 ## Automated evidence
 
-All 68 host test methods pass, exercising the production OTA parsers/state machine,
+All 69 host test methods pass, exercising the production OTA parsers/state machine,
 settings, identity boundaries, game logic, Neko decoding and relay framing.
 The relay suite has 15 passing tests for signed admission, malformed envelopes,
 replays, aggregate credits, stale pulses, NAT budgets, hibernation and reconnect.

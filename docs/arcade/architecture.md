@@ -31,7 +31,8 @@ receipt. It has no administrator, Wi-Fi, OTA, display-configuration, or shell
 operation. The board authenticates a fresh 256-bit challenge using its existing
 P-256 device key; the signed message includes device, connection and boot IDs.
 The Worker stores only its public key. Both legs validate TLS normally. The
-board rejects redirects before sending its signature. No campus password,
+board rejects redirects without forwarding its admission proof to another
+destination. No campus password,
 Clerk secret, Cloudflare token or GitHub token is stored in the firmware.
 
 A hibernating Durable Object retains bounded socket attachments. The ESP emits
@@ -48,6 +49,22 @@ and serialized with OTA. The relay releases its TLS allocation before OTA or
 release checking starts. Background release checks wait while a game is active.
 BOOT maintenance and USB recovery remain available. The public guest password
 never grants administrative access.
+
+The relay resolves at most four IPv4 addresses through the pinned SDK's
+bounds-checked multi-address resolver. It tries one address per existing retry
+and backoff interval, advances after failure, and prefers the last successful
+address while DNS still advertises it. Answer reordering and duplicate records
+do not pin retries to a failed endpoint. No service IP is hard-coded. DNS
+resolution occurs before taking the OTA lease; the supervisor rechecks the
+configuration, connectivity and OTA permission afterward.
+
+`relay_transport.c` owns an external SDK TLS/WebSocket transport pair. Its
+linker wrapper changes only the dial address of that exact TLS handle. The
+original hostname remains both the TLS SNI/verification name and HTTP Host;
+certificate-bundle validation stays enabled. Other transports pass through
+unchanged. Each connection attempt retains its 5-second transport timeout.
+Redirect results are rejected before the WebSocket client can follow them.
+The transport pair is destroyed only after the client task has stopped.
 
 ## Games and simulation
 

@@ -724,6 +724,8 @@ def cmd_audit(args):
             raise ValueError(f"Required firmware policy missing: {option}")
     if configuration.get("CJSON_NESTING_LIMIT") != 8:
         raise ValueError("JSON nesting limit must be bounded")
+    if configuration.get("LWIP_DNS_MAX_HOST_IP") != 4:
+        raise ValueError("Relay failover requires four bounded DNS address slots")
     if configuration.get("ESP_TASK_WDT_TIMEOUT_S") != 15:
         raise ValueError("Health task watchdog must reset an unresponsive trial after 15 seconds")
     rows = []
