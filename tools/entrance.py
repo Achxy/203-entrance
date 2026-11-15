@@ -826,7 +826,7 @@ def cmd_soak(args):
 def cmd_display(args):
     device = Device(args.host, tls12=getattr(args, "tls12", False))
     device.login()
-    body = {key: value for key in ("mode", "profile", "rotation", "inverted", "replay_chapter")
+    body = {key: value for key in ("mode", "profile", "rotation", "inverted", "replay_chapter", "animation_slot")
             if (value := getattr(args, key)) is not None}
     if body:
         device.request("PUT", "/api/v1/display", body)
@@ -928,6 +928,7 @@ def main():
             p.add_argument("--disable", action="store_true")
         if name == "diagnostics": p.add_argument("--output", default=str(LOCAL / "diagnostics.json"))
         if name == "display":
+            p.add_argument("--animation-slot", type=int, choices=[1,2], help="1 restores the original Neko and layout; 2 selects the study paw")
             p.add_argument("--mode", choices=["play", "pause", "blank", "test", "replay", "replay_pause"])
             p.add_argument("--profile", choices=["red", "green", "black"])
             p.add_argument("--replay-chapter", type=int, choices=[0], help="Restart the built-in loop; the room-number header stays fixed")

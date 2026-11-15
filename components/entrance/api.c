@@ -318,7 +318,9 @@ static esp_err_t route(httpd_req_t *r)
                 r, "409 Conflict", "busy",
                 "Wait for the firmware update to finish before loading the replay preview.");
         size_t size;
-        const uint8_t *data = display_replay_asset(&size);
+        unsigned slot;
+        const uint8_t *data = display_replay_asset(&size, &slot);
+        httpd_resp_set_hdr(r, "X-Animation-Slot", slot == 2 ? "2" : "1");
         headers(r);
         httpd_resp_set_type(r, "application/octet-stream");
         for (size_t at = 0; at < size; at += 4096) {

@@ -20,7 +20,7 @@ bool builtin_loop_open(builtin_loop_t *loop, const uint8_t *data, size_t size)
     if (!loop)
         return false;
     memset(loop, 0, sizeof(*loop));
-    if (!media_validate(data, size, &loop->info))
+    if (!media_validate_builtin(data, size, &loop->info))
         return false;
     loop->data = data;
     loop->size = size;
@@ -53,12 +53,19 @@ uint16_t builtin_loop_color(const builtin_loop_t *loop, size_t pixel)
 bool builtin_loop_row(const builtin_loop_t *loop, unsigned width, unsigned height,
                       unsigned y, unsigned caption, uint16_t *out)
 {
-    if (!loop || !loop->data || !out || y >= height ||
+    return builtin_loop_scene_row(loop, width, height, y, 1, caption, out);
+}
+bool builtin_loop_scene_row(const builtin_loop_t *loop, unsigned width, unsigned height,
+                            unsigned y, unsigned slot, unsigned caption, uint16_t *out)
+{
+    if (!loop || !loop->data || !out || y >= height || slot < 1 || slot > 2 ||
         !((width == 160 && height == 128) || (width == 128 && height == 160)))
         return false;
-    unsigned header = height == 128 ? CAPTION_HEADER_LANDSCAPE : CAPTION_HEADER_PORTRAIT;
+    unsigned header = slot == 1 ? (height == 128 ? CAPTION_HEADER_LANDSCAPE : CAPTION_HEADER_PORTRAIT)
+                                : (height == 128 ? 32 : 40);
+    unsigned text_height = slot == 1 ? 0 : (height == 128 ? 20 : 30);
     if (y < header) {
-        caption_row(caption, width, header, y, out);
+        room_number_row(slot == 1 ? 4 : 3, width, header, y, out);
         return true;
     }
     memset(out, 0, width * sizeof(*out));
@@ -67,14 +74,19 @@ bool builtin_loop_row(const builtin_loop_t *loop, unsigned width, unsigned heigh
             out[x] = 0xffe0;
         return true;
     }
-    unsigned dw = width, dh = height - header - 1;
+    unsigned content_top = header + 1 + text_height;
+    if (y < content_top) {
+        study_caption_row(caption, width, y - header - 1, out);
+        return true;
+    }
+    unsigned dw = width, dh = height - content_top;
     if (width * loop->info.height > dh * loop->info.width)
         dw = dh * loop->info.width / loop->info.height;
     else
         dh = width * loop->info.height / loop->info.width;
     if (!dw) dw = 1;
     if (!dh) dh = 1;
-    unsigned left = (width - dw) / 2, top = header + 1 + (height - header - 1 - dh) / 2;
+    unsigned left = (width - dw) / 2, top = content_top + (height - content_top - dh) / 2;
     if (y >= top && y < top + dh)
         for (unsigned x = 0; x < dw; x++) {
             unsigned sx = x * loop->info.width / dw;

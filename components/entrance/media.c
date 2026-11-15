@@ -61,9 +61,9 @@ bool media_frame(const uint8_t *data, size_t size, size_t pixels, size_t *offset
     *offset = end;
     return true;
 }
-bool media_validate(const uint8_t *data, size_t size, media_info_t *info)
+static bool validate(const uint8_t *data, size_t size, size_t limit, media_info_t *info)
 {
-    if (!data || size < MEDIA_HEADER_BYTES + 3 || size > MEDIA_MAX_BYTES ||
+    if (!data || size < MEDIA_HEADER_BYTES + 3 || size > limit ||
         memcmp(data, "ECL1", 4) || u32(data + 4) != size || data[15] || data[18] || data[19])
         return false;
     unsigned w = data[12], h = data[13], fps = data[14], frames = u16(data + 16);
@@ -91,4 +91,12 @@ bool media_validate(const uint8_t *data, size_t size, media_info_t *info)
         memcpy(info->title, data + 20, sizeof(info->title));
     }
     return true;
+}
+bool media_validate(const uint8_t *data, size_t size, media_info_t *info)
+{
+    return validate(data, size, MEDIA_MAX_BYTES, info);
+}
+bool media_validate_builtin(const uint8_t *data, size_t size, media_info_t *info)
+{
+    return validate(data, size, BUILTIN_MAX_BYTES, info);
 }

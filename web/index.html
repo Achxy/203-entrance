@@ -40,16 +40,18 @@
         <div class="section-heading"><h2><span>01</span> Display studio</h2><span id="display-badge" class="badge">Reading panel</span></div>
         <div id="replay-studio" class="replay-studio" hidden>
           <div class="replay-preview">
-            <canvas id="replay-preview" width="128" height="160" role="img" aria-label="Local preview of the Neko wave beneath the red room number 203"></canvas>
+            <canvas id="replay-preview" width="128" height="160" role="img" aria-label="Local preview of the selected animation beneath the white room number 203"></canvas>
             <button id="replay-preview-toggle" class="quiet" type="button" aria-pressed="false">Load local preview</button>
           </div>
           <div class="replay-details">
             <p class="eyebrow">BUILT-IN · PLAYS WITHOUT A BROWSER</p>
-            <h3>Neko wave</h3>
-            <p class="muted">A gentle beckoning paw, a seamless loop, and a still, crisp pixel-art cat. A large red 203 stays centered above the yellow divider.</p>
-            <p id="replay-caption" class="replay-caption">Shenanigans by the 203 dudes</p>
+            <h3 id="replay-title">1 · Neko wave</h3>
+            <label for="animation-slot">Saved animation</label>
+            <div class="action-row"><select id="animation-slot"><option value="1">1 · Original Neko — restore original layout</option><option value="2">2 · Study paw</option></select><button id="animation-apply" class="secondary" type="button">Use this slot</button></div>
+            <p id="replay-description" class="muted">Two saved animations. Return to slot 1 whenever you want the original Neko and layout.</p>
+            <p id="replay-caption" class="replay-caption">203</p>
             <div class="replay-timeline"><progress id="replay-progress" max="1" value="0" aria-label="Device replay progress"></progress><span id="replay-position" class="muted">Reading replay…</span></div>
-            <div class="action-row"><button id="replay-play" type="button">Play Neko</button><button id="replay-pause" class="secondary" type="button">Pause wave</button><button id="replay-restart" class="quiet" type="button">Restart wave</button></div>
+            <div class="action-row"><button id="replay-play" type="button">Play animation</button><button id="replay-pause" class="secondary" type="button">Pause animation</button><button id="replay-restart" class="quiet" type="button">Restart animation</button></div>
             <p id="replay-work" class="muted" role="status">The preview runs on this browser. Device controls act on the physical panel.</p>
             <p id="replay-spec" class="muted studio-footnote"></p>
           </div>

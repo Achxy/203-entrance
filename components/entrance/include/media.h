@@ -5,6 +5,7 @@
 
 /* Fits two NVS blob generations plus the OTA journal and GC reserve in state. */
 #define MEDIA_MAX_BYTES 12288u
+#define BUILTIN_MAX_BYTES 65536u
 #define MEDIA_HEADER_BYTES 80u
 #define MEDIA_MAX_PIXELS 20480u
 #define MEDIA_MAX_FRAMES 120u
@@ -16,6 +17,7 @@ typedef struct {
 } media_info_t;
 
 bool media_validate(const uint8_t *data, size_t size, media_info_t *info);
+bool media_validate_builtin(const uint8_t *data, size_t size, media_info_t *info);
 /* Caller supplies MEDIA_MAX_PIXELS/2 bytes. Start offset at MEDIA_HEADER_BYTES. */
 bool media_frame(const uint8_t *data, size_t size, size_t pixels, size_t *offset, uint8_t *packed);
 uint8_t media_pixel(const uint8_t *packed, size_t pixel);

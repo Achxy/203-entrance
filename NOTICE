@@ -43,3 +43,11 @@ reference supplied by the project owner. Generation and assembly provenance
 are in assets/neko/art-direction.md and assets/neko/provenance.json. This
 artwork is separate from the repository code license; no third-party artwork
 license is asserted by this notice.
+
+Study paw uses the owner's supplied cat reference, with a generated chest
+inpainting patch and deterministic original-pixel animation. See
+assets/study/art-direction.md and provenance.json. No third-party artwork
+license is asserted by the repository's code license.
+The four Japanese bitmap glyphs are from Misaki Gothic, Copyright (C)
+2002-2021 Num Kadoma. Its permissive license and source details are retained
+in assets/study/MISAKI-LICENSE.txt and misaki-glyphs.json.

@@ -31,7 +31,7 @@ class SoakWindow:
                 raise ValueError("Stale or missing soak telemetry")
             if uptime <= previous["uptime_ms"]:
                 raise ValueError("Unexpected reset or stale device uptime")
-            for key in ("version", "slot", "settings_generation", "clip_sha256", "panel"):
+            for key in ("version", "slot", "settings_generation", "clip_sha256", "panel", "animation_slot"):
                 if sample.get(key) != first.get(key):
                     raise ValueError(f"Unexpected {key} change during soak")
             if self.replay:
@@ -79,6 +79,7 @@ def http_sample(status):
     display = status["display"]
     result = {k: status[k] for k in ("version", "slot", "uptime_ms", "free_heap", "minimum_heap", "largest_block", "reset_reason")}
     result.update(services=status["ota"]["healthy"], trial=status["ota"]["trial"],
+                  animation_slot=display.get("animation_slot", 1),
                   settings_generation=status["network"]["settings_generation"],
                   clip_sha256=display["sha256"],
                   panel={k: display[k] for k in ("profile", "rotation", "inverted")},

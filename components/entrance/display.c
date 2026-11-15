@@ -2,6 +2,7 @@
 #include "arcade.h"
 #include "builtin_loop.h"
 #include "captions.h"
+#include "display_config.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_heap_caps.h"
@@ -15,12 +16,7 @@
 enum { MODE_TEST, MODE_PLAY, MODE_PAUSE, MODE_BLANK, MODE_REPLAY, MODE_REPLAY_PAUSE, MODE_COUNT };
 static const char *modes[] = {"test", "play", "pause", "blank", "replay", "replay_pause"};
 static const char *profiles[] = {"red", "green", "black"};
-typedef struct {
-    uint32_t magic;
-    uint8_t mode, rotation, profile, inverted;
-    uint32_t crc;
-} display_config_t;
-static display_config_t config = {.magic = 0x31444345, .rotation = 1, .profile = 2};
+static display_config_t config = {.magic = DISPLAY_CONFIG_MAGIC, .rotation = 1, .profile = 2, .animation_slot = 1};
 static nvs_handle_t storage;
 static SemaphoreHandle_t mutex;
 static spi_device_handle_t spi;
@@ -38,6 +34,9 @@ static union {
 static bool replay_loaded;
 extern const uint8_t replay_asset_start[] asm("_binary_neko_ecl_start");
 extern const uint8_t replay_asset_end[] asm("_binary_neko_ecl_end");
+extern const uint8_t study_asset_start[] asm("_binary_study_ecl_start");
+extern const uint8_t study_asset_end[] asm("_binary_study_ecl_end");
+static uint64_t caption_started_us;
 static uint8_t *strip;
 static size_t media_size, frame_offset = MEDIA_HEADER_BYTES;
 static media_info_t info;
@@ -55,15 +54,32 @@ static bool replay_mode(unsigned mode)
 {
     return mode == MODE_REPLAY || mode == MODE_REPLAY_PAUSE;
 }
-static bool open_replay(void)
+static const uint8_t *animation_asset(unsigned slot, size_t *size)
 {
-    replay_loaded = builtin_loop_open(&movie, replay_asset_start, replay_asset_end - replay_asset_start);
+    const uint8_t *start = slot == 2 ? study_asset_start : replay_asset_start;
+    const uint8_t *end = slot == 2 ? study_asset_end : replay_asset_end;
+    *size = end - start;
+    return start;
+}
+static unsigned active_caption(void)
+{
+    return config.animation_slot == 2 ? study_caption_index((uint64_t)esp_timer_get_time() - caption_started_us) : 0;
+}
+static bool open_replay(unsigned slot)
+{
+    size_t size;
+    const uint8_t *asset = animation_asset(slot, &size);
+    replay_loaded = builtin_loop_open(&movie, asset, size);
+    caption_started_us = esp_timer_get_time();
     return replay_loaded;
 }
-const uint8_t *display_replay_asset(size_t *size)
+const uint8_t *display_replay_asset(size_t *size, unsigned *slot)
 {
-    *size = replay_asset_end - replay_asset_start;
-    return replay_asset_start;
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    *slot = config.animation_slot;
+    const uint8_t *asset = animation_asset(*slot, size);
+    xSemaphoreGive(mutex);
+    return asset;
 }
 static esp_err_t send_bytes(bool data, const void *bytes, size_t length)
 {
@@ -174,11 +190,12 @@ static esp_err_t draw(void)
     }
     unsigned left = (w - dw) / 2, top = (h - dh) / 2;
     uint16_t caption[160];
+    unsigned caption_index = active_caption();
     for (unsigned y = 0; y < h; y += 4) {
         for (unsigned row = 0; row < 4; row++) {
             unsigned py = y + row;
             if (game_frame) arcade_frame_row(w, h, py, caption);
-            if (!game_frame && builtin && !builtin_loop_row(&movie, w, h, py, 0, caption))
+            if (!game_frame && builtin && !builtin_loop_scene_row(&movie, w, h, py, config.animation_slot, caption_index, caption))
                 return ESP_ERR_INVALID_SIZE;
             bool pairing = arcade_pair_row(py, caption, w);
             for (unsigned x = 0; x < w; x++) {
@@ -230,6 +247,7 @@ static void display_task(void *arg)
     (void)arg;
     int64_t next = 0;
     bool was_suspended = false, was_game = false;
+    unsigned last_caption = 0;
     for (;;) {
         heartbeat_ms = (uint32_t)(esp_timer_get_time() / 1000);
         bool suspended = ota_busy() && !ota_trial();
@@ -265,7 +283,10 @@ static void display_task(void *arg)
                 if (next < now)
                     next = now + period;
             }
-            if (dirty || advance) {
+            unsigned caption = active_caption();
+            bool caption_changed = builtin && caption != last_caption;
+            if (dirty || advance || caption_changed) {
+                last_caption = caption;
                 if (driver_ready && draw() != ESP_OK)
                     driver_ready = false;
                 if (!driver_ready) {
@@ -289,12 +310,6 @@ bool display_healthy(void)
 {
     return driver_ready && (uint32_t)(esp_timer_get_time() / 1000) - heartbeat_ms < 5000;
 }
-static bool valid_config(const display_config_t *value)
-{
-    return value->magic == 0x31444345 && value->mode < MODE_COUNT && value->rotation < 4 &&
-           value->profile < 3 && value->inverted < 2 &&
-           value->crc == record_crc(value, offsetof(display_config_t, crc));
-}
 esp_err_t display_start(void)
 {
     mutex = xSemaphoreCreateMutex();
@@ -305,13 +320,21 @@ esp_err_t display_start(void)
     if (storage_ready) {
         display_config_t saved;
         size_t n = sizeof(saved);
-        err = nvs_get_blob(storage, "config_v2", &saved, &n);
-        bool legacy = err == ESP_ERR_NVS_NOT_FOUND;
-        if (legacy) {
-            n = sizeof(saved);
-            err = nvs_get_blob(storage, "config", &saved, &n);
+        err = nvs_get_blob(storage, "config_v3", &saved, &n);
+        bool legacy = false, saved_valid = false;
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            uint8_t old[12];
+            n = sizeof(old);
+            err = nvs_get_blob(storage, "config_v2", old, &n);
+            legacy = err == ESP_ERR_NVS_NOT_FOUND;
+            if (legacy) {
+                n = sizeof(old);
+                err = nvs_get_blob(storage, "config", old, &n);
+            }
+            saved_valid = err == ESP_OK && display_config_legacy(old, n, &saved);
+        } else {
+            saved_valid = err == ESP_OK && n == sizeof(saved) && display_config_valid(&saved);
         }
-        bool saved_valid = err == ESP_OK && n == sizeof(saved) && valid_config(&saved);
         if (saved_valid)
             config = saved;
         else if (err != ESP_ERR_NVS_NOT_FOUND)
@@ -340,7 +363,7 @@ esp_err_t display_start(void)
         strlcpy(last_error, "Media storage unavailable. USB recovery is required.",
                 sizeof(last_error));
     }
-    if (!open_replay()) {
+    if (!open_replay(config.animation_slot)) {
         strlcpy(last_error, "Embedded replay failed validation.", sizeof(last_error));
         return ESP_ERR_INVALID_CRC;
     }
@@ -458,7 +481,7 @@ esp_err_t display_remove(void)
 }
 esp_err_t display_configure(const cJSON *request)
 {
-    if (!cJSON_IsObject(request) || !cJSON_GetArraySize(request) || cJSON_GetArraySize(request) > 5)
+    if (!cJSON_IsObject(request) || !cJSON_GetArraySize(request) || cJSON_GetArraySize(request) > 6)
         return ESP_ERR_INVALID_ARG;
     if (!begin_change())
         return ESP_ERR_INVALID_STATE;
@@ -485,6 +508,10 @@ esp_err_t display_configure(const cJSON *request)
                    item->valuedouble >= 0 && item->valuedouble <= 3 &&
                    item->valuedouble == item->valueint) {
             next.rotation = item->valueint;
+        } else if (!strcmp(item->string, "animation_slot") && cJSON_IsNumber(item) &&
+                   item->valuedouble >= 1 && item->valuedouble <= ANIMATION_SLOTS &&
+                   item->valuedouble == item->valueint) {
+            next.animation_slot = item->valueint;
         } else if (!strcmp(item->string, "replay_chapter") && cJSON_IsNumber(item) &&
                    item->valuedouble >= 0 && item->valuedouble < 32 &&
                    item->valuedouble == item->valueint) {
@@ -497,6 +524,10 @@ esp_err_t display_configure(const cJSON *request)
     }
     if (chapter >= 0 && (!replay_mode(next.mode) || chapter != 0))
         return end_change(ESP_ERR_INVALID_ARG);
+    size_t candidate_size;
+    const uint8_t *candidate = animation_asset(next.animation_slot, &candidate_size);
+    if (!media_validate_builtin(candidate, candidate_size, NULL))
+        return end_change(ESP_ERR_INVALID_CRC);
     next.crc = record_crc(&next, offsetof(display_config_t, crc));
     if (chapter < 0 && !memcmp(&next, &config, sizeof(config)))
         return end_change(ESP_OK);
@@ -515,7 +546,7 @@ esp_err_t display_configure(const cJSON *request)
     }
     esp_err_t err = ESP_OK;
     if (memcmp(&next, &config, sizeof(next))) {
-        err = nvs_set_blob(storage, "config_v2", &next, sizeof(next));
+        err = nvs_set_blob(storage, "config_v3", &next, sizeof(next));
         if (err == ESP_OK)
             err = nvs_commit(storage);
     }
@@ -523,7 +554,7 @@ esp_err_t display_configure(const cJSON *request)
         panel_dirty |= next.profile != config.profile || next.rotation != config.rotation ||
                        next.inverted != config.inverted;
         bool use_replay = replay_mode(next.mode);
-        if (use_replay && !replay_loaded && !open_replay()) {
+        if (use_replay && (!replay_loaded || next.animation_slot != config.animation_slot) && !open_replay(next.animation_slot)) {
             driver_ready = false;
             free(saved_clip);
             return end_change(ESP_ERR_INVALID_CRC);
@@ -580,6 +611,8 @@ cJSON *display_status(void)
     cJSON_AddBoolToObject(j, "has_stored_clip", stored_clip);
     cJSON_AddBoolToObject(j, "suspended", suspended);
     cJSON_AddStringToObject(j, "mode", modes[config.mode]);
+    cJSON_AddNumberToObject(j, "animation_slot", config.animation_slot);
+    cJSON_AddNumberToObject(j, "animation_slots", ANIMATION_SLOTS);
     cJSON_AddStringToObject(j, "profile", profiles[config.profile]);
     cJSON_AddNumberToObject(j, "rotation", config.rotation);
     cJSON_AddBoolToObject(j, "inverted", config.inverted);
@@ -600,21 +633,25 @@ cJSON *display_status(void)
     cJSON_AddNumberToObject(j, "last_frame_us", last_frame_us);
     cJSON_AddNumberToObject(j, "max_frame_us", max_frame_us);
     cJSON_AddStringToObject(j, "error", last_error);
+    size_t asset_size;
+    const uint8_t *asset = animation_asset(config.animation_slot, &asset_size);
+    unsigned caption = active_caption();
     cJSON *replay = cJSON_AddObjectToObject(j, "replay");
     cJSON_AddBoolToObject(replay, "active", replay_loaded && replay_mode(config.mode));
-    cJSON_AddNumberToObject(replay, "bytes", replay_asset_end - replay_asset_start);
+    cJSON_AddNumberToObject(replay, "bytes", asset_size);
     cJSON_AddNumberToObject(replay, "frame", replay_loaded ? movie.frame : 0);
     cJSON_AddStringToObject(replay, "format", "ECL1");
-    cJSON_AddStringToObject(replay, "title", "Neko wave");
-    cJSON_AddNumberToObject(replay, "width", replay_asset_start[12]);
-    cJSON_AddNumberToObject(replay, "height", replay_asset_start[13]);
-    cJSON_AddNumberToObject(replay, "frames", replay_asset_start[16] | (uint16_t)replay_asset_start[17] << 8);
-    cJSON_AddNumberToObject(replay, "period_us", 1000000 / replay_asset_start[14]);
-    /* Keep the v1 restart selector compatible with older clients. */
+    cJSON_AddStringToObject(replay, "title", config.animation_slot == 1 ? "Neko wave" : "Study paw");
+    cJSON_AddNumberToObject(replay, "width", asset[12]);
+    cJSON_AddNumberToObject(replay, "height", asset[13]);
+    cJSON_AddNumberToObject(replay, "frames", asset[16] | (uint16_t)asset[17] << 8);
+    cJSON_AddNumberToObject(replay, "period_us", 1000000 / asset[14]);
     cJSON_AddNumberToObject(replay, "chapters", 1);
     cJSON_AddNumberToObject(replay, "loops", replay_loaded ? movie.loops : 0);
-    cJSON_AddStringToObject(replay, "caption", caption_text(0));
-    cJSON_AddNumberToObject(replay, "caption_index", 0);
+    cJSON_AddStringToObject(replay, "room_number", "203");
+    cJSON_AddStringToObject(replay, "caption", config.animation_slot == 1 ? caption_text(0) : study_caption_text(caption));
+    cJSON_AddNumberToObject(replay, "caption_index", caption);
+    cJSON_AddNumberToObject(replay, "caption_period_ms", config.animation_slot == 1 ? 0 : 1350);
     cJSON_AddBoolToObject(j, "brightness_control", false);
     cJSON_AddBoolToObject(j, "panel_feedback", false);
     xSemaphoreGive(mutex);
@@ -632,7 +669,7 @@ void display_telemetry(void)
              "\"late_frames\":%lu,\"caption\":%u,\"ready\":%s}",
              modes[config.mode], (unsigned long)(replay_loaded ? movie.frame : frame),
              (unsigned long)rendered, (unsigned long)(replay_loaded ? movie.loops : loops),
-             (unsigned long)last_frame_us, (unsigned long)late_frames, 0u,
+             (unsigned long)last_frame_us, (unsigned long)late_frames, active_caption(),
              display_healthy() ? "true" : "false");
     xSemaphoreGive(mutex);
 }

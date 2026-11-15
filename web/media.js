@@ -111,9 +111,9 @@
     });
     return encodeIndexed({ width, height, fps, frames: indexed, palette, title });
   }
-  function decode(input) {
+  function decodeLimited(input, limit) {
     const data = input instanceof Uint8Array ? input : new Uint8Array(input);
-    if (data.length < HEADER + 3 || data.length > CAPACITY) throw new Error("Clip must fit the 12 KiB storage budget.");
+    if (data.length < HEADER + 3 || data.length > limit) throw new Error(limit === CAPACITY ? "Clip must fit the 12 KiB storage budget." : "Built-in loop exceeds its 64 KiB bound.");
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
     if (String.fromCharCode(...data.slice(0, 4)) !== "ECL1" || view.getUint32(4, true) !== data.length ||
         view.getUint32(8, true) !== crc32(data.subarray(12)) || data[15] || data[18] || data[19] || data[47]) throw new Error("Clip header or checksum is invalid.");
@@ -155,5 +155,7 @@
     if (at !== data.length) throw new Error("Unexpected bytes after clip.");
     return { data, width, height, fps, frames, palette, title };
   }
-  globalThis.EntranceMedia = { CAPACITY, HEADER, crc32, rgb, encode, encodeIndexed, decode };
+  const decode = input => decodeLimited(input, CAPACITY);
+  const decodeBuiltin = input => decodeLimited(input, 65536);
+  globalThis.EntranceMedia = { CAPACITY, HEADER, crc32, rgb, encode, encodeIndexed, decode, decodeBuiltin };
 })();

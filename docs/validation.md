@@ -4,8 +4,32 @@
 
 The scope now also includes phone-controlled games, the public site, Clerk
 identity/guest records and an Internet relay. See the [arcade checkpoint](arcade/validation.md)
-for the installed RC12 image, production web checks, campus TLS diagnosis and
+for the installed RC14 image, production web checks, campus TLS diagnosis and
 the explicit prohibition on further laptop Wi-Fi switching.
+
+## Saved animation slots, 16 November 2026
+
+Before implementation, authenticated readback confirmed healthy RC14 and an
+exact byte match of its original Neko asset. An 18-file private restore bundle
+preserves that signed release, source, animation, readable configuration and
+existing USB identity. It is not a new full-flash backup.
+
+The candidate adds a second built-in loop and preserves slot 1's original
+pixels/layout. All 36 study frames were visually inspected after the final
+eight-pixel paw offset. The original face stays fixed, the loop endpoints match,
+and all three final caption layouts include their literal asterisks and Japanese
+glyphs. The 30,694-byte asset is bounded separately from custom media.
+
+All 82 host test methods pass. The original 144 Neko LCD raster comparisons
+remain unchanged; all 216 study C/browser LCD rasters agree. Native decoding
+completed 100 study loops. Migration checks cover all 144 older panel/mode
+combinations while retaining the old record for rollback. Desktop/mobile browser
+checks pass at 1440, 390 and 320 pixels, including slot selection/restoration,
+caption timing, themes, keyboard use, local assets and failure handling.
+
+These are software and artwork checks. Candidate installation, physical panel
+appearance and the longer qualification gates must be recorded separately.
+See [saved animation details and recovery](animation-slots.md).
 
 ## Hardware and preservation
 

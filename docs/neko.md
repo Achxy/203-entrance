@@ -1,5 +1,8 @@
 # Neko wave
 
+Animation slot 1 preserves this original layout and artwork. See
+[Saved animation slots](animation-slots.md) to switch back at any time.
+
 The default display is a seated pixel-art beckoning cat derived from the owner's
 reference. Only its raised paw moves. The animation repeats every **2.4 seconds**:
 24 frames at 10 fps, eight distinct poses, 96 × 87 pixels, and a shared 16-color

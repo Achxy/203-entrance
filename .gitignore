@@ -29,3 +29,5 @@ sites/arcade/.env*
 sites/arcade/.dev.vars
 sites/arcade/.wrangler/
 sites/arcade/.clerk/
+
+output/study/

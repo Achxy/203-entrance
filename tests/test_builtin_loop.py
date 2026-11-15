@@ -35,3 +35,25 @@ class BuiltinLoopTests(unittest.TestCase):
         for n in [0,4,79,80,len(self.asset)-1]:
             self.assertFalse(self.open(self.asset[:n]));self.assertFalse(self.lib.advance_loop())
         broken=bytearray(self.asset);broken[-1]^=1;self.assertFalse(self.open(bytes(broken)))
+    def test_study_artwork_and_one_hundred_loop_boundaries(self):
+        data=(ROOT/'assets/study/study.ecl').read_bytes()
+        proof=json.loads((ROOT/'assets/study/provenance.json').read_text())
+        self.assertTrue(self.open(data))
+        for loop in range(100):
+            for frame,expected in enumerate(proof['frame_sha256_rgb565le']):
+                self.assertEqual(self.lib.current_loop_frame(),frame)
+                self.assertEqual(hashlib.sha256(self.pixels()).hexdigest(),expected)
+                self.assertTrue(self.lib.advance_loop())
+            self.assertEqual(self.lib.loop_count(),loop+1)
+        self.lib.media_validate.argtypes=[C.c_void_p,C.c_size_t,C.c_void_p]
+        self.assertFalse(self.lib.media_validate(self.buffer,len(data),None))
+        self.assertFalse(self.open(data+b'\0'*(65537-len(data))))
+    def test_caption_clock_and_literal_unicode_text(self):
+        self.lib.study_caption_index.argtypes=[C.c_uint64]
+        self.lib.study_caption_text.argtypes=[C.c_uint]
+        self.lib.study_caption_text.restype=C.c_char_p
+        for us in (0,1349999,1350000,2699999,2700000,4049999,4050000,86400000000,2**55):
+            self.assertEqual(self.lib.study_caption_index(us),(us//1350000)%3)
+        expected=['*paws at you* please study for endsems vro','*paws at you* actually vro','*paws at you* さよなら vro']
+        for i,text in enumerate(expected):
+            self.assertEqual(self.lib.study_caption_text(i).decode(),text)

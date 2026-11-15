@@ -7,9 +7,9 @@ error model as firmware operations:
 
 | Method and path | Request / result |
 |---|---|
-| `GET /api/v1/display` | Driver, saved content hash/size, playback counters, errors, panel settings |
-| `PUT /api/v1/display` | JSON subset of `mode` (`test`, `play`, `pause`, `blank`, `replay`, `replay_pause`), `profile` (`red`, `green`, `black`), `rotation` (0–3), `inverted` (boolean), `replay_chapter` (`0` to restart the built-in loop) |
-| `GET /api/v1/display/replay` | Authenticated binary ECL1 download for local preview; 409 during OTA, at most 12,288 bytes |
+| `GET /api/v1/display` | Driver, saved content hash/size, playback counters, errors, panel settings, selected `animation_slot` and available `animation_slots` |
+| `PUT /api/v1/display` | JSON subset of `mode` (`test`, `play`, `pause`, `blank`, `replay`, `replay_pause`), `profile` (`red`, `green`, `black`), `rotation` (0–3), `inverted` (boolean), `animation_slot` (1 or 2), `replay_chapter` (`0` to restart the selected built-in loop) |
+| `GET /api/v1/display/replay` | Authenticated binary ECL1 download of the selected animation for local preview; `X-Animation-Slot` identifies the returned asset; 409 during OTA, at most 65,536 bytes |
 | `PUT /api/v1/display/clip` | `application/octet-stream`; complete validated ECL1 clip, maximum 12,288 bytes; replaces the saved clip after validation |
 | `GET /api/v1/display/clip` | Binary ECL1 download; 404 if unavailable |
 | `DELETE /api/v1/display/clip` | Explicit removal of the saved clip; does not erase the OTA journal or credentials |
@@ -23,12 +23,18 @@ See [ECL1 and the electrical/storage constraints](display.md).
 
 The `display.replay` object reports `active`, `format`, `title`, source `width`
 and `height`, asset `bytes`, `frame`, `frames`, `period_us`, completed `loops`,
-`caption` and `caption_index`. The compatibility `chapters` field is `1`.
+`room_number`, `caption`, `caption_index` and `caption_period_ms`. The compatibility `chapters` field is `1`.
 Restart with `mode: replay` and `replay_chapter: 0`; other chapter indices are
-rejected. `caption` is the fixed room label `203`; `caption_index` remains `0`
-for API compatibility. Pausing or restarting the loop does not alter the label.
+rejected. Slot 1 is the unchanged original Neko with fixed caption `203`, index
+`0` and period `0`. Slot 2 is Study paw, with three independent captions and a
+period of `1350` ms; `room_number` remains `203`. Pausing or restarting the paw
+does not reset the caption clock. Changing slots does reset it. Slot selection
+and panel/playback settings are saved atomically; older configuration records
+remain intact for rollback. Use `{ "animation_slot": 1, "mode": "replay" }`
+to restore the original Neko and layout.
 The browser preview has its own local timeline; its controls are explicitly
-separate from device playback. See [Neko packing and frame verification](neko.md).
+separate from device playback. See [saved animation slots](animation-slots.md)
+and [Neko packing and frame verification](neko.md).
 
 ## Firmware and management operations
 

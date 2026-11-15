@@ -16,3 +16,5 @@ bool builtin_loop_seek(builtin_loop_t *loop, uint32_t frame);
 uint16_t builtin_loop_color(const builtin_loop_t *loop, size_t pixel);
 bool builtin_loop_row(const builtin_loop_t *loop, unsigned width, unsigned height,
                       unsigned y, unsigned caption, uint16_t *out);
+bool builtin_loop_scene_row(const builtin_loop_t *loop, unsigned width, unsigned height,
+                            unsigned y, unsigned slot, unsigned caption, uint16_t *out);
