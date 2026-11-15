@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.16)
+get_filename_component(ENTRANCE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../session"
+    "${ENTRANCE_ROOT}/managed_components/espressif__cjson")
+set(COMPONENTS main bt protocomm nvs_flash esp_timer session)
+set(PROBE_STAGE "3" CACHE STRING "0=NVS, 1=NimBLE, 2=Security2, 3=session manager")
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(lights-resource-probe)
+foreach(name protocomm esp_security)
+    idf_component_get_property(component_lib ${name} COMPONENT_LIB)
+    target_compile_definitions(${component_lib} PRIVATE LOG_LOCAL_LEVEL=ESP_LOG_INFO)
+endforeach()

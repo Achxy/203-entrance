@@ -26,8 +26,9 @@
     }
   ],
   "vars": {
+    "LIGHTS_ENABLED": "false",
     "DEVICE_ID": "entrance-c7f088",
-    "ALLOWED_ORIGINS": "https://203.at.achyuth.dev,https://room-203-arcade.sid381788.chatgpt.site",
+    "ALLOWED_ORIGINS": "https://203.at.achyuth.dev,https://room-203-arcade.sid381788.chatgpt.site,https://iot.203.at.achyuth.dev,https://room-203-lights.sid381788.chatgpt.site",
     "DEVICE_PUBLIC_KEY": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE/Z4kg40nfjYTBW54Y/pivy09FHfi\nruvh62ZVPm9rGcZ0LubXXEtD4Sl22Sd7vAE3n3t1mS1rjIOU+zr/cnTFuw==\n-----END PUBLIC KEY-----\n"
   }
 }

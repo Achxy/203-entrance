@@ -1,6 +1,7 @@
 #include "arcade.h"
 #include "arcade_address.h"
 #include "protocol.h"
+#include "lights_integration.h"
 #include "esp_timer.h"
 #include "esp_random.h"
 #include "esp_netif.h"
@@ -17,7 +18,11 @@ static bool storage_ready;
 static _Atomic bool guest_network, maintenance;
 static _Atomic uint64_t heartbeat;
 static httpd_handle_t server;
+#if ENTRANCE_LIGHTS
+static uint8_t *frame;
+#else
 static uint8_t frame[ARCADE_FRAME_BYTES];
+#endif
 static bool frame_active;
 static char boot_id[17];
 static uint32_t log_index, log_overwrites;
@@ -437,6 +442,10 @@ cJSON *arcade_dispatch(const char *op, const char *token, const cJSON *body, uin
                        bool remote, int *status)
 {
     *status = 200;
+    bool peak = !strcmp(op, "join");
+    if (peak && !lights_peak_begin())
+        return dispatch_error(status, "503 Service Unavailable", "busy",
+                              "The display is busy briefly. Try joining again.");
     xSemaphoreTake(lock, portMAX_DELAY);
     grant_t *g = remote ? grant(token) : NULL;
     /* Campus NAT can put both human controllers behind one public IP. Keep
@@ -447,6 +456,8 @@ cJSON *arcade_dispatch(const char *op, const char *token, const cJSON *body, uin
     cJSON *j = p ? dispatch_locked(op, token, body, p, remote, status)
                  : dispatch_error(status, "429", "rate", "Please slow down and retry shortly.");
     xSemaphoreGive(lock);
+    if (peak)
+        lights_peak_end();
     return j;
 }
 void arcade_relay_disconnected(void)
@@ -603,10 +614,21 @@ bool arcade_display_active(void)
     xSemaphoreGive(lock);
     return active;
 }
+#if ENTRANCE_LIGHTS
+bool arcade_frame_begin(uint8_t *workspace, size_t capacity)
+#else
 bool arcade_frame_begin(void)
+#endif
 {
     if (!lock)
         return false;
+#if ENTRANCE_LIGHTS
+    if (!workspace || capacity < ARCADE_FRAME_BYTES) {
+        frame_active = false;
+        return false;
+    }
+    frame = workspace;
+#endif
     xSemaphoreTake(lock, portMAX_DELAY);
     frame_active = state.stage != ARCADE_IDLE;
     if (frame_active)

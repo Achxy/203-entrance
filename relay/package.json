@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --import ./tests/register.mjs --test tests/*.test.mjs",
-    "check": "node --check src/worker.mjs",
+    "check": "node --check src/worker.mjs && node --check src/lights-lane.mjs && node --check src/lights-protocol.mjs",
     "dev": "wrangler dev --local --port 8788",
     "deploy": "wrangler deploy"
   },

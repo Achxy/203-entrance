@@ -15,7 +15,12 @@ esp_err_t arcade_set_guest_network(bool enabled);
 void arcade_maintenance(void);
 void arcade_owner_release(void);
 bool arcade_display_active(void);
+#if ENTRANCE_LIGHTS
+/* The display task owns this workspace until its matching row reads finish. */
+bool arcade_frame_begin(uint8_t *workspace, size_t capacity);
+#else
 bool arcade_frame_begin(void);
+#endif
 bool arcade_frame_row(unsigned width, unsigned height, unsigned y, uint16_t *row);
 bool arcade_pair_row(unsigned y, uint16_t *row, unsigned width);
 cJSON *arcade_status(void);

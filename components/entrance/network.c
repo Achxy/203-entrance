@@ -9,6 +9,9 @@
 #include "esp_log.h"
 #include <string.h>
 #include <time.h>
+#if ENTRANCE_LIGHTS
+#include "network_time.h"
+#endif
 
 static _Atomic bool online, ready, maintenance, station_enabled;
 static bool sntp_started;
@@ -19,6 +22,41 @@ static esp_timer_handle_t reconnect_timer;
 static unsigned failures;
 static _Atomic bool trial_uplink_held;
 static char station_ip[20] = "offline";
+
+#if ENTRANCE_LIGHTS
+static portMUX_TYPE time_mutex = portMUX_INITIALIZER_UNLOCKED;
+static network_time_anchor_t time_anchor;
+
+static void lighting_time_sync(struct timeval *received)
+{
+    int64_t monotonic_us = esp_timer_get_time();
+    portENTER_CRITICAL(&time_mutex);
+    if (received)
+        network_time_capture(&time_anchor, received->tv_sec, received->tv_usec, monotonic_us);
+    else
+        time_anchor = (network_time_anchor_t){0};
+    portEXIT_CRITICAL(&time_mutex);
+}
+
+bool net_trusted_clock(llt_clock_t *sample)
+{
+    network_time_anchor_t snapshot;
+    portENTER_CRITICAL(&time_mutex);
+    snapshot = time_anchor;
+    portEXIT_CRITICAL(&time_mutex);
+    return network_time_sample(&snapshot, esp_timer_get_time(), sample);
+}
+
+bool net_trusted_unix_time(int64_t *seconds)
+{
+    if (!seconds)
+        return false;
+    llt_clock_t sample;
+    bool valid = net_trusted_clock(&sample);
+    *seconds = valid ? sample.seconds : 0;
+    return valid;
+}
+#endif
 
 static void reconnect(void *arg)
 {
@@ -71,6 +109,9 @@ static void event(void *arg, esp_event_base_t base, int32_t id, void *data)
         failures = 0;
         if (!sntp_started) {
             esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+#if ENTRANCE_LIGHTS
+            cfg.sync_cb = lighting_time_sync;
+#endif
             sntp_started = esp_netif_sntp_init(&cfg) == ESP_OK;
         }
         diag_event("Wi-Fi uplink connected");
@@ -153,7 +194,7 @@ esp_err_t net_init(void)
     ap.ap.ssid_len = strlen(ssid);
     strlcpy((char *)ap.ap.password, password, sizeof(ap.ap.password));
     ap.ap.channel = 1;
-    ap.ap.max_connection = 4;
+    ap.ap.max_connection = ENTRANCE_LIGHTS ? 8 : 4;
     ap.ap.authmode = WIFI_AUTH_WPA2_PSK;
     ap.ap.pmf_cfg.capable = true;
     if ((err = esp_wifi_set_mode(WIFI_MODE_APSTA)) != ESP_OK)

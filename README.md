@@ -19,6 +19,11 @@ The existing CLI still verifies the display's HTTPS certificate and image signat
 - Two saved animations with a centered white **203** and yellow divider: the original Neko wave and a photographic pixel-art study paw with independent 1.35-second captions. Restore the original Neko and layout at any time from Display studio. See [animation slots and restoration](docs/animation-slots.md).
 - Tetris, one- or two-player Pong and a compact Pac-Man adaptation, with phone controls, physical pairing codes, inactivity release and a five-minute hard turn limit.
 - [Public controller website](https://203.at.achyuth.dev), optional Google identity, a private Clerk-linked guest book and an authenticated outbound WebSocket relay. Internet play is the primary route; the local guest hotspot is a fallback. See the [arcade qualification record](docs/arcade/validation.md) before relying on the Internet route.
+- [203 Lights development project](lights/README.md): a native macOS menulet,
+  [browser controls](https://iot.203.at.achyuth.dev), owner/guest policy and a
+  guarded WiZ gateway candidate for the same display ESP32. Lighting is off in
+  the default firmware build. See the [lighting validation record](docs/lights/validation-2026-11-16.md)
+  for the distinction between published interfaces, host tests and working hardware.
 - Public source in [Achxy/203-entrance](https://github.com/Achxy/203-entrance) and separate signed assets in [Achxy/203-entrance-firmware](https://github.com/Achxy/203-entrance-firmware).
 
 Hardware Secure Boot, flash encryption and eFuse anti-rollback stay disabled. Software signature verification protects the OTA path while keeping USB recovery. Physical access can read or replace flash. No entrance-device behavior is implemented yet.
@@ -89,7 +94,7 @@ continuous healthy seconds over serial. It requires a newer signed version.
 It retains credentials, custom clips, the previous application, bootloader and
 partition table. This trusted physical installation does not exercise the OTA
 trial-ticket protocol. USB monitoring keeps the Mac on its Internet connection;
-Bluetooth management is not implemented.
+Bluetooth firmware management is not implemented.
 
 ## Browser certificate enrollment
 
@@ -144,3 +149,6 @@ No npm code, external fonts, CDN assets or Internet resources are required by th
 - [Arcade API and owner commands](docs/arcade/api.md)
 - [Arcade research and evidence limits](docs/arcade/research.md)
 - [Arcade qualification checkpoint](docs/arcade/validation.md)
+- [Lighting architecture and security](docs/lights/gateway-architecture.md)
+- [WiZ capabilities and standalone commissioning research](docs/lights/wiz-standalone-commissioning-research.md)
+- [Lighting validation and remaining gates](docs/lights/validation-2026-11-16.md)

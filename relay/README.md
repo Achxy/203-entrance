@@ -54,3 +54,21 @@ See the [protocol](../docs/arcade/api.md),
 [architecture](../docs/arcade/architecture.md) and
 [research](../docs/arcade/research.md) for clock leases, rate limits, admission
 proofs, disconnect handling and scoped test evidence.
+
+## Lighting extension
+
+The separate [lighting protocol](LIGHTS_PROTOCOL.md) multiplexes opaque, bounded
+Security2 requests over the same authenticated device WebSocket. The checked-in
+`LIGHTS_ENABLED` value is `"false"`; the lighting WebSocket remains unavailable
+unless that value is explicitly changed to `"true"`. The read-only
+`/v1/lights/info` descriptor remains available and reports `online: false` while
+disabled, without allocating a Durable Object or lighting resources. A
+supporting device must also advertise `light_protocol: 1` before any lighting
+client can connect. Existing game clients and firmware retain their existing
+wire protocol and admission limits.
+
+This is a tested relay transport extension, not evidence of a working bulb
+gateway, authenticated native client, hardware coexistence, or production
+deployment. End-to-end cryptography, signed gateway identity, WiZ authorization,
+pairing and bulb behavior belong to the client and gateway integrations. Keep
+the flag disabled until those integrations have passed their acceptance checks.

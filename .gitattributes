@@ -1,1 +1,5 @@
 tools/fceumm-capture.patch -whitespace
+# Keep pinned upstream mathematical sources and license texts byte-identical.
+lights/security/Sources/EspressifSRP/BigInt/** -whitespace
+lights/security/Licenses/** -whitespace
+sites/lights/src/security/licenses/** -whitespace

@@ -43,6 +43,15 @@ esp_err_t net_init(void);
 esp_err_t net_apply(void);
 bool net_online(void);
 bool net_ready(void);
+#if ENTRANCE_LIGHTS
+/* Received SNTP evidence from this boot, extrapolated for at most 24 hours.
+ * No RTC/plausible-date fallback. Network time is unauthenticated, not attested.
+ * The reference remains the actual sync instant; reads never renew its age.
+ * Lighting signed writes and its AP time service must share this admission. */
+struct llt_clock;
+bool net_trusted_clock(struct llt_clock *sample);
+bool net_trusted_unix_time(int64_t *seconds);
+#endif
 void net_maintenance(void);
 cJSON *net_status(void);
 

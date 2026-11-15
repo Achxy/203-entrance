@@ -89,3 +89,71 @@ Native/Python codec tests cover every payload size, fragmented streams, boot
 noise and corruption. Socket-pair tests cover bidirectional data, reconnects
 and stale-session isolation. Those tests do not establish physical radio
 reachability; record real scans, pinned HTTPS and OTA results separately.
+
+## Read-only WiZ diagnostics (hub 1.1.0)
+
+Stop the TCP proxy before this command. It verifies the spare's expected MAC and
+firmware before joining the Wi-Fi profile. The laptop's networking is untouched.
+Credentials are accepted only through the JSON profile file, never command-line
+SSID/password arguments.
+
+    ./hubctl wiz-query --port /dev/cu.usbmodem101 --expected-mac SPARE_MAC \
+      --wifi-profile .local/lights/oneplus-wifi.json \
+      --home-export /path/to/private-wiz-home-export.json \
+      --output .local/lights/diagnostics/wiz-read.json
+
+The owner-authorized export must have version "1.0" and one to eight
+devices[].mac_address entries. Only those MACs are retained from the export;
+its signing key, home IDs, traits and credentials are not used, transmitted or
+copied into the diagnostic. Keep the profile, export and report out of source
+control. The output directory is created with mode 0700; an existing nonprivate
+directory is rejected without changing its permissions. The report is atomically
+written mode 0600. Console output contains counts and bounded model/firmware/CCT
+information, never full MACs, IPs, home IDs, credentials or raw user configuration.
+
+The diagnostic sends at most two subnet-broadcast getSystemConfig requests.
+Only matching replies from exported MACs become targets. It then asks those
+identified endpoints for getModelConfig, getUserConfig, getPilot, and optional
+getTime, with at most two attempts per method. There is no arbitrary-method,
+arbitrary-packet, setPilot, registration, reset, pairing, or signed-write path.
+The first four method shapes follow the pinned
+[pywizlight source](https://github.com/sbidy/pywizlight/blob/19e607afe0eb6db1473602639e194d691234d4fd/pywizlight/bulb.py).
+Optional-method rejection and timeouts are legitimate outcomes. A locked bulb
+may require authentication even for reads; these diagnostics use no home key.
+
+Packets bind the hub's station interface and local IPv4 address, stay within
+its RFC1918 subnet, and use UDP 38899. Public, multicast, network, broadcast
+response addresses and the hub's own address are rejected. Discovery is 1.6 s;
+each targeted read is bounded to 700 ms and the entire operation to 25 s.
+At most four receive packets are processed per main-loop pass. The maximum
+operation is 66 small outgoing reads and 40 accepted replies. Conflicting MAC/IP
+claims are excluded from targeted reads. These checks are correlation, **not
+cryptographic authentication** of a bulb.
+
+USB framing stays at protocol 1 and a 2048-byte payload limit. Command 8 carries
+version 1, count and raw allowed MACs. A start reply precedes paired metadata
+(0x89, 16 bytes) and raw reply-body (0x8a, at most 2048 bytes) frames, then a
+bounded summary (0x8b). Every frame retains the request ID and CRC. The extra
+2049th UDP receive byte detects oversized datagrams; truncated prefixes are never
+parsed. Duplicate decoded JSON keys, excessive nesting/token budgets, unmatched
+method/MAC/IP and unexpected stream ordering are rejected. TCP forwarding and
+Wi-Fi changes are rejected while a diagnostic is active; its Wi-Fi configuration
+is not restored automatically afterward. Run the TCP proxy with the desired
+profile again when maintenance is complete.
+
+Run the eleven check groups with:
+
+    python3 -m unittest discover -s tests -p test_usb_hub.py -v
+
+They cover existing TCP forwarding/reconnect/isolation, all 2049 USB payload
+sizes, metadata/body matching, privacy/permissions, maximum-size/oversized UDP,
+all fixed read methods, retries/deadlines, identity conflicts and 2000 arbitrary
+datagrams in the C parser under ASan/UBSan. The pinned ESP-IDF ESP32-C3
+compile/link passed. These checks do not claim a successful physical light read,
+Wi-Fi association or control.
+
+The console recognizes cctRange on newer models, extRange, and legacy whiteRange,
+preserving the reported array and naming its source field. A sanitized physical
+ESP25_SHRGB_01 / 1.38.0 model response is included as a regression fixture; its
+2200–6500 K range and minimum dimming 10 appear in the summary. Gradient and
+white-channel flags are not presented as implemented control capabilities.

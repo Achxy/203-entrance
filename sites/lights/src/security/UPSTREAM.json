@@ -1,0 +1,42 @@
+{
+  "esp_idf_revision": "fff9895c82d744c7237be8847347bdd1b07c6643",
+  "espressif_ios_revision": "ff70c09ded605969e053ade44a6b8756b93c4e4c",
+  "references": [
+    {
+      "path": "lights/security/Sources/EspressifSRP/SRPClient.swift",
+      "sha256": "90620fd2b66f242f1640ec8d689b1779b6d7668b160fb07f66413f6a91bcada3"
+    },
+    {
+      "path": "lights/security/Sources/EspressifSRP/Group.swift",
+      "sha256": "e3231bb9fff81aa4044f574d1d8c13ef1985e5be631264bb0ece79af1681a95b"
+    },
+    {
+      "path": "lights/security/Sources/LightsSecurity/Security2Session.swift",
+      "sha256": "2f0ef3af659cd5f02725398ed452e49c16c2b874f6ec3dc296bdd3acd725fcff"
+    },
+    {
+      "path": "lights/security/Sources/LightsSecurity/GatewayIdentity.swift",
+      "sha256": "71119cbd6002093575f6705e8e7121875aee36c98efc981aee75ab1ce3de2627"
+    },
+    {
+      "path": "lights/security/IDENTITY.md",
+      "sha256": "0cccdcde986c790aea1de4bc722496602db8bbe8f9a7615e6349dc2a5f4ddf06"
+    },
+    {
+      "path": "lights/security/Schemas/sec2.proto",
+      "sha256": "47499cdff3cdcc282a5857e35f19250f3f6cce07e042bc57d46c41fc2c410975"
+    },
+    {
+      "path": "lights/security/Schemas/session.proto",
+      "sha256": "4388992ab23cb527c0d53a0feac64c7bf3f92d99e3127f73d1ca821a2e181533"
+    },
+    {
+      "path": "lights/security/Tests/LightsSecurityTests/Fixtures/idf61.json",
+      "sha256": "5c0666bdefdbc78110101a7db63229f3c269b50eec7b460bdabadef7b9301b59"
+    },
+    {
+      "path": ".tools/esp-idf/components/protocomm/test_apps/main/test_srp.c",
+      "sha256": "c69d93bc86936589908d494492c0617056e78a0134a1278b74c6b7b9a30dedff"
+    }
+  ]
+}

@@ -8,6 +8,10 @@ import queue
 import socket
 import threading
 import types
+import json
+import os
+import io
+import contextlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -15,6 +19,130 @@ import usb_wifi_hub as hub
 
 
 class HubFrameTests(unittest.TestCase):
+    def test_actual_model_temperature_summary(self):
+        fixture = ROOT/'lights/firmware/wiz/tests/fixtures/esp25_shrgb_01_1.38.0_model.json'
+        reply = hub.strict_json(fixture.read_bytes())
+        self.assertEqual(hub.model_summary(reply['result']), {
+            'reported_white_range': [2200, 2700, 6500, 6500],
+            'reported_white_range_field': 'cctRange', 'reported_min_dimming': 10})
+        self.assertEqual(hub.model_summary({'whiteRange':[2700,6500]})['reported_white_range_field'], 'whiteRange')
+        self.assertEqual(hub.model_summary({'extRange':[2200,2700,6500,6500]})['reported_white_range_field'], 'extRange')
+        for value in ([True,6500], [500,6500], [2200,12000], [2200], '2200,6500'):
+            self.assertNotIn('reported_white_range', hub.model_summary({'cctRange':value}))
+        self.assertEqual(hub.model_summary({'hasGradient':1, 'nowc':1}), {})
+
+    def test_wiz_core_bounds_and_read_only_state_machine(self):
+        with tempfile.TemporaryDirectory() as temp:
+            binary = pathlib.Path(temp) / 'hub-wiz'
+            subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
+                            '-Wno-deprecated-declarations', '-fsanitize=address,undefined',
+                            '-I', str(ROOT / 'hub/firmware/main'),
+                            '-I', str(ROOT / 'managed_components/espressif__cjson/cJSON'),
+                            str(ROOT / 'tests/native/hub_wiz_test.c'),
+                            str(ROOT / 'hub/firmware/main/wiz_diag.c'),
+                            str(ROOT / 'managed_components/espressif__cjson/cJSON/cJSON.c'),
+                            '-o', str(binary)], check=True)
+            result = subprocess.check_output([str(binary)], timeout=30)
+            self.assertIn(b'PASS bounded read-only', result)
+
+    def test_private_export_extracts_only_allowed_macs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = pathlib.Path(temp) / 'export.json'
+            value = {'version': '1.0', 'udp_signing_key': 'TEST-KEY-NEVER-USED',
+                     'home_id': 'TEST-HOME', 'devices': [{'mac_address': '44:00:00:00:00:01', 'traits': ['color']}]}
+            path.write_text(json.dumps(value))
+            self.assertEqual(hub.home_allowlist(path), [bytes.fromhex('440000000001')])
+            value['devices'] *= 2
+            path.write_text(json.dumps(value))
+            with self.assertRaises(ValueError): hub.home_allowlist(path)
+            path.write_text('{"version":"1.0","version":"1.0","devices":[]}')
+            with self.assertRaises(ValueError): hub.home_allowlist(path)
+            value['devices'] = [{'mac_address': 'ffffffffffff'}]
+            path.write_text(json.dumps(value))
+            with self.assertRaises(ValueError): hub.home_allowlist(path)
+
+    def test_wiz_stream_identity_bounds_and_pairing(self):
+        class SerialDouble:
+            bad_endpoint = False
+            def __init__(self, **_kwargs):
+                self.input = queue.Queue(); self.decoder = hub.Decoder()
+            def open(self): pass
+            def close(self): pass
+            def reset_input_buffer(self): pass
+            def read(self, _n):
+                try: return self.input.get(timeout=.02)
+                except queue.Empty: return b''
+            def write(self, data):
+                for kind, request, payload in self.decoder.feed(data):
+                    if kind != hub.WIZ_QUERY: raise AssertionError('Unexpected command')
+                    if payload != b'\1\1' + bytes.fromhex('440000000001'): raise AssertionError('Unexpected allowlist')
+                    body = b'{"method":"getSystemConfig","result":{"mac":"440000000001","moduleName":"ESP24_SHRGB_01"}}'.ljust(2048)
+                    ip = b'\x08\x08\x08\x08' if self.bad_endpoint else b'\xc0\xa8\x2b\x03'
+                    meta = b'\1\0\0\0' + ip + bytes.fromhex('440000000001') + len(body).to_bytes(2, 'little')
+                    events = [(hub.WIZ_QUERY | 128, b'{"ok":true}'),
+                              (hub.WIZ_META, meta), (hub.WIZ_BODY, body),
+                              (hub.WIZ_DONE, b'{"ok":true,"replies":1}')]
+                    self.input.put(b''.join(hub.encode(k, request, p) for k, p in events))
+                return len(data)
+        state = {'ip': '192.168.43.2', 'netmask': '255.255.255.0'}
+        for bad in (False, True):
+            SerialDouble.bad_endpoint = bad
+            with patch.dict(sys.modules, serial=types.SimpleNamespace(Serial=SerialDouble)):
+                device = hub.Hub('fake-usb')
+            try:
+                if bad:
+                    with self.assertRaises(ValueError): device.wiz_query([bytes.fromhex('440000000001')], state)
+                else:
+                    report = device.wiz_query([bytes.fromhex('440000000001')], state)
+                    self.assertEqual(report['records'][0]['method'], 'getSystemConfig')
+                    self.assertEqual(report['summary']['replies'], 1)
+                self.assertEqual(device.streams, {})
+            finally: device.close()
+
+    def test_private_diagnostic_and_console_redaction(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = pathlib.Path(temp)
+            export, profile = directory/'home.json', directory/'wifi.json'
+            export.write_text(json.dumps({'version':'1.0', 'udp_signing_key':'PRIVATE-EXPORT-KEY',
+                                         'devices':[{'mac_address':'440000000001'}]}))
+            profile.write_text(json.dumps({'ssid':'PRIVATE-NETWORK','password':'PRIVATE-PASSWORD'}))
+            output = directory/'private'/'report.json'
+            class FakeHub:
+                def __init__(self, _port): pass
+                def rpc(self, kind): return {'protocol':1,'firmware':'1.1.0','mac':'440000000099'}
+                def connect_wifi(self, received):
+                    self.received = received
+                    return {'ip':'192.168.43.2','netmask':'255.255.255.0'}
+                def wiz_query(self, allowed, state):
+                    return {'summary':{'ok':True,'replies':1},'records':[{
+                        'index':0,'mac':allowed[0].hex(),'ip':'192.168.43.3','method':'getSystemConfig',
+                        'response':{'method':'getSystemConfig','result':{'mac':allowed[0].hex(),
+                        'homeId':'PRIVATE-HOME','moduleName':'ESP24_SHRGB_01','fwVersion':'1.36.1'}}}]}
+                def close(self): pass
+            args=types.SimpleNamespace(port='fake-usb',expected_mac='440000000099',
+                                       wifi_profile=profile,home_export=export,output=output)
+            printed=io.StringIO()
+            with patch.object(hub,'Hub',FakeHub),contextlib.redirect_stdout(printed): hub.wiz_query(args)
+            for secret in ('PRIVATE-EXPORT-KEY','PRIVATE-NETWORK','PRIVATE-PASSWORD','PRIVATE-HOME','440000000001','192.168.43.3'):
+                self.assertNotIn(secret,printed.getvalue())
+            self.assertIn('ESP24_SHRGB_01',printed.getvalue())
+            self.assertNotIn('PRIVATE-EXPORT-KEY',output.read_text())
+            self.assertEqual(output.stat().st_mode & 0o777,0o600)
+            self.assertEqual(output.parent.stat().st_mode & 0o777,0o700)
+            os.chmod(output.parent,0o755)
+            with self.assertRaises(ValueError): hub.private_diagnostic(output,{'safe':True})
+            self.assertEqual(output.parent.stat().st_mode & 0o777,0o755)
+            args.expected_mac='440000000098'
+            with patch.object(hub,'Hub',FakeHub):
+                with self.assertRaises(ValueError): hub.wiz_query(args)
+
+    def test_diagnostic_rejects_public_networks_and_bad_json(self):
+        for ip, mask in [('8.8.8.8','255.255.255.0'),('127.0.0.1','255.255.255.0'),
+                         ('192.168.4.0','255.255.255.0'),('192.168.4.255','255.255.255.0')]:
+            with self.assertRaises(ValueError): hub.diagnostic_network({'ip':ip,'netmask':mask})
+        for data in (b'{"a":1,"\\u0061":2}',b'{"a":NaN}',b'{"a":1e999}',b'\xff',b'{"a":"\\u0000"}',b'{}{}'):
+            with self.assertRaises(ValueError): hub.strict_json(data)
+
     def test_link_recovery_is_bounded_and_only_for_connect_failures(self):
         recovery = hub.LinkRecovery()
         self.assertFalse(recovery.failed('tcp_connect_failed', 0))

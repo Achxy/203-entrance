@@ -1,0 +1,21 @@
+LightsSecurity contains or adapts the following third-party work:
+
+Espressif ESP-IDF and ESP-IDF provisioning-ios
+Copyright Espressif Systems (Shanghai) CO LTD
+Apache License 2.0; see Licenses/Espressif-Apache-2.0.txt.
+
+SRP client and group parameters included in Espressif's iOS library
+Copyright (C) 2016 Bouke Haarsma
+MIT License; see Licenses/SRP-MIT.txt and retained source headers.
+
+BigUInt implementation included in Espressif's iOS library
+Copyright (c) 2016-2017 Károly Lőrentey
+MIT License; see Licenses/BigUInt-MIT.txt and retained source headers.
+
+SwiftProtobuf
+Copyright Apple Inc. and the Swift project authors
+Apache License 2.0; see Licenses/SwiftProtobuf-Apache-2.0.txt.
+
+Exact source revisions and adaptation notes are in UPSTREAM.json and UPSTREAM.md.
+The P-256 channel-binding extension is project-specific and is not represented
+as an upstream Espressif feature or as having received an independent audit.

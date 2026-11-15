@@ -1,0 +1,129 @@
+{
+  "espressif_ios": {
+    "tag": "3.0.3",
+    "revision": "ff70c09ded605969e053ade44a6b8756b93c4e4c"
+  },
+  "esp_idf": {
+    "tag": "v6.1",
+    "revision": "fff9895c82d744c7237be8847347bdd1b07c6643"
+  },
+  "swift_protobuf": {
+    "version": "1.39.0",
+    "revision": "3d537cb81aef272a03cb3be815439e9bf0eb3bd3"
+  },
+  "files": [
+    {
+      "local": "Sources/EspressifSRP/BigInt/Addition.swift",
+      "upstream": "ESPProvision/Security2/BigInt/Addition.swift",
+      "upstream_sha256": "3865b22ea78359b65326abd339d636a6d7733829bb48b1c0cea2fca703efe361",
+      "adapted": false
+    },
+    {
+      "local": "Sources/EspressifSRP/BigInt/BigUInt.swift",
+      "upstream": "ESPProvision/Security2/BigInt/BigUInt.swift",
+      "upstream_sha256": "7b614c4566dc7c6c2c71f5ba5844dcf9af99fb6537fc6371177afe2d4822e708",
+      "adapted": true
+    },
+    {
+      "local": "Sources/EspressifSRP/BigInt/Bitwise Ops.swift",
+      "upstream": "ESPProvision/Security2/BigInt/Bitwise Ops.swift",
+      "upstream_sha256": "63fe9cd696e5aca8adc5fd7426d008c65f87910fd1ba5a75945fcc263277d865",
+      "adapted": false
+    },
+    {
+      "local": "Sources/EspressifSRP/BigInt/Comparable.swift",
+      "upstream": "ESPProvision/Security2/BigInt/Comparable.swift",
+      "upstream_sha256": "cd439e2c44b81772edd3a3314e759d8ff678bb16c063f327891d8fc4f8555c80",
+      "adapted": false
+    },
+    {
+      "local": "Sources/EspressifSRP/BigInt/Data Conversion.swift",
+      "upstream": "ESPProvision/Security2/BigInt/Data Conversion.swift",
+      "upstream_sha256": "69457b2241da883c68aedcbe6145a8685430e9d95d5fbeb237a77f1df37b623b",
+      "adapted": false
+    },
+    {
+      "local": "Sources/EspressifSRP/BigInt/Division.swift",
+      "upstream": "ESPProvision/Security2/BigInt/Division.swift",
+      "upstream_sha256": "e226210af29c18012835ed221ccadcecee0479319cd43293707d104887149c07",
+      "adapted": false
+    },
+    {
+      "local": "Sources/EspressifSRP/BigInt/Exponentiation.swift",
+      "upstream": "ESPProvision/Security2/BigInt/Exponentiation.swift",
+      "upstream_sha256": "35d29768a75e45b824f88b00159433c2509db138836832e03c299a714e7b6ea1",
+      "adapted": false
+    },
+    {
+      "local": "Sources/EspressifSRP/BigInt/Floating Point Conversion.swift",
+      "upstream": "ESPProvision/Security2/BigInt/Floating Point Conversion.swift",
+      "upstream_sha256": "e4fb069721b4ebc40c0d1744589601a27ecd38eb3316a413922e9a5501a55959",
+      "adapted": false
+    },
+    {
+      "local": "Sources/EspressifSRP/BigInt/Hashable.swift",
+      "upstream": "ESPProvision/Security2/BigInt/Hashable.swift",
+      "upstream_sha256": "c3dcaf3235eb52ef0117c74c7cb4a4f4fbd923c59bb9f984df051a0cf2093515",
+      "adapted": false
+    },
+    {
+      "local": "Sources/EspressifSRP/BigInt/Integer Conversion.swift",
+      "upstream": "ESPProvision/Security2/BigInt/Integer Conversion.swift",
+      "upstream_sha256": "b7cc9fac9f5f757f0fdff677d05c53034895aa7ed577f76ab017345368d5c70a",
+      "adapted": false
+    },
+    {
+      "local": "Sources/EspressifSRP/BigInt/Multiplication.swift",
+      "upstream": "ESPProvision/Security2/BigInt/Multiplication.swift",
+      "upstream_sha256": "2478e73e6ab6178f316d54f2ff9159dee8e0ed5dc275ef3cc8ae9cd203a95121",
+      "adapted": false
+    },
+    {
+      "local": "Sources/EspressifSRP/BigInt/Shifts.swift",
+      "upstream": "ESPProvision/Security2/BigInt/Shifts.swift",
+      "upstream_sha256": "8ee95dc3cb48febdd2e4681b207926e04880dbdf92a904db7d86a6979e78d82a",
+      "adapted": false
+    },
+    {
+      "local": "Sources/EspressifSRP/BigInt/String Conversion.swift",
+      "upstream": "ESPProvision/Security2/BigInt/String Conversion.swift",
+      "upstream_sha256": "9e3dc3f85d5ba0d7b94eb75c28a1345ebd35eb233e9826ed29b3331e8cb01ede",
+      "adapted": false
+    },
+    {
+      "local": "Sources/EspressifSRP/BigInt/Subtraction.swift",
+      "upstream": "ESPProvision/Security2/BigInt/Subtraction.swift",
+      "upstream_sha256": "908c2eaec947f20101b316b914506d2da5fd6f16f777e690c6f8da7bceaa4ad3",
+      "adapted": false
+    },
+    {
+      "local": "Sources/EspressifSRP/BigInt/Words and Bits.swift",
+      "upstream": "ESPProvision/Security2/BigInt/Words and Bits.swift",
+      "upstream_sha256": "22bde0dddea8d643b7fc39548e7fba63b390aaa3a5153b94d4c80882931ff50f",
+      "adapted": false
+    },
+    {
+      "local": "Sources/EspressifSRP/Group.swift",
+      "upstream": "ESPProvision/Security2/SRP/Group.swift",
+      "upstream_sha256": "e3231bb9fff81aa4044f574d1d8c13ef1985e5be631264bb0ece79af1681a95b",
+      "adapted": false
+    },
+    {
+      "local": "Sources/EspressifSRP/SRPClient.swift",
+      "upstream": "ESPProvision/Security2/SRP/Client.swift",
+      "upstream_sha256": "da65134308841ee698a29a7519d8c6f5c5dce6331d156d4cf56e43942281f599",
+      "adapted": true
+    }
+  ],
+  "additional_srp_reference": {
+    "source": "ESPProvision/Security2/SRP/SRP.swift",
+    "sha256": "7ba409f1496a724912bbda8cfb5d1073609cc9a1cf03fcd8b250128e980330f5"
+  },
+  "schema_files": {
+    "constants.proto": "9c1c699da3c2a7700f32d14c323e2bb8af4db3ba2c85f61b9c229d1f0f5d41d8",
+    "sec0.proto": "6f26c737f82b472fd078bd8f2ab4af8af7de4640fa31af7b080c02123f1df48f",
+    "sec1.proto": "a36bfcfe67d2c9c60d94673d02d6de2f28470445768d6a2c42a70fdd17f2c280",
+    "sec2.proto": "47499cdff3cdcc282a5857e35f19250f3f6cce07e042bc57d46c41fc2c410975",
+    "session.proto": "4388992ab23cb527c0d53a0feac64c7bf3f92d99e3127f73d1ca821a2e181533"
+  }
+}

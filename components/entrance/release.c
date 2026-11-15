@@ -1,5 +1,6 @@
 #include "entrance.h"
 #include "relay.h"
+#include "lights_integration.h"
 #include "arcade.h"
 #include "protocol.h"
 #include "esp_app_desc.h"
@@ -7,6 +8,9 @@
 #include "esp_crt_bundle.h"
 #include "esp_timer.h"
 #include "esp_random.h"
+#if ENTRANCE_LIGHTS
+#include "esp_heap_caps.h"
+#endif
 #include "psa/crypto.h"
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +35,10 @@ bool release_checking(void)
 static char release_message[128] = "Offline: connect an optional Wi-Fi uplink to check GitHub";
 static int64_t next_check;
 static char requested_version[32];
+#if ENTRANCE_LIGHTS
+static esp_timer_handle_t release_timer;
+static bool worker_running;
+#endif
 typedef struct {
     char location[2048];
 } redirect_t;
@@ -236,12 +244,15 @@ static esp_err_t download_image(release_t *r)
 static void worker(void *unused)
 {
     (void)unused;
-    next_check = esp_timer_get_time() + 30000000;
     for (;;) {
         xSemaphoreTake(release_mutex, portMAX_DELAY);
         bool install = install_requested;
         bool check = check_requested || (net_online() && esp_timer_get_time() >= next_check &&
                                          !ota_busy() && !arcade_display_active());
+#if ENTRANCE_LIGHTS
+        if (!install && !check && net_online() && esp_timer_get_time() >= next_check)
+            next_check = esp_timer_get_time() + 15000000;
+#endif
         release_t release = available;
         char version[32];
         strlcpy(version, requested_version, sizeof(version));
@@ -273,7 +284,10 @@ static void worker(void *unused)
         } else if (check) {
             release_t candidate = {0};
             bool reserved = relay_quiesce();
-            esp_err_t err = reserved ? fetch_release(&candidate, version) : ESP_ERR_TIMEOUT;
+            bool peak = reserved && lights_peak_begin();
+            esp_err_t err = peak ? fetch_release(&candidate, version) : ESP_ERR_TIMEOUT;
+            if (peak)
+                lights_peak_end();
             if (reserved)
                 relay_resume();
             xSemaphoreTake(release_mutex, portMAX_DELAY);
@@ -292,16 +306,70 @@ static void worker(void *unused)
                          (esp_random() % 600) * 1000000LL;
             xSemaphoreGive(release_mutex);
         }
+#if ENTRANCE_LIGHTS
+        xSemaphoreTake(release_mutex, portMAX_DELAY);
+        worker_running = false;
+        xSemaphoreGive(release_mutex);
+        vTaskDelete(NULL);
+        return;
+#else
         vTaskDelay(pdMS_TO_TICKS(1000));
+#endif
     }
 }
+#if ENTRANCE_LIGHTS
+static esp_err_t start_worker_locked(void)
+{
+    if (worker_running)
+        return ESP_ERR_INVALID_STATE;
+    if (!lights_peak_begin())
+        return ESP_ERR_TIMEOUT;
+    bool capacity = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) >= 48u * 1024u &&
+                    heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) >= 24u * 1024u;
+    esp_err_t err = ESP_ERR_NO_MEM;
+    if (capacity) {
+        worker_running = true;
+        if (xTaskCreate(worker, "releases", 10240, NULL, tskIDLE_PRIORITY, NULL) == pdPASS)
+            err = ESP_OK;
+        else
+            worker_running = false;
+    }
+    lights_peak_end();
+    return err;
+}
+static void schedule_worker(void *unused)
+{
+    (void)unused;
+    /* The timer never waits for application locks or performs network work.
+       Only the temporary worker owns the 10 KiB TLS/verification stack. */
+    if (!release_mutex || xSemaphoreTake(release_mutex, 0) != pdTRUE)
+        return;
+    bool ready = install_requested || (!ota_busy() && (check_requested ||
+                 (net_online() && esp_timer_get_time() >= next_check)));
+    if (ready && !worker_running && start_worker_locked() != ESP_OK) {
+        strlcpy(release_message, "Waiting for memory before release work", sizeof(release_message));
+        if (!install_requested && !check_requested)
+            next_check = esp_timer_get_time() + 15000000;
+    }
+    xSemaphoreGive(release_mutex);
+}
+#endif
 void release_start(void)
 {
     release_mutex = xSemaphoreCreateMutex();
+    next_check = esp_timer_get_time() + 30000000;
+#if ENTRANCE_LIGHTS
+    esp_timer_create_args_t timer = {.callback = schedule_worker, .name = "release_schedule",
+                                     .skip_unhandled_events = true};
+    if (!release_mutex || esp_timer_create(&timer, &release_timer) != ESP_OK ||
+        esp_timer_start_periodic(release_timer, 1000000) != ESP_OK)
+        abort();
+#else
     /* Share CPU with IDLE during TLS crypto; keep watchdog and health service live. */
     if (!release_mutex ||
         xTaskCreate(worker, "releases", 10240, NULL, tskIDLE_PRIORITY, NULL) != pdPASS)
         abort();
+#endif
 }
 esp_err_t release_check(const char *version)
 {
@@ -331,9 +399,15 @@ esp_err_t release_install(char ticket[65])
     if (available.valid && !installing && !checking) {
         bool valid = false;
         int order = version_compare(available.version, esp_app_get_description()->version, &valid);
-        err = valid && order > 0
-                  ? ota_begin(available.size, available.hash, available.version, ticket)
-                  : ESP_ERR_INVALID_VERSION;
+        err = valid && order > 0 ? ESP_OK : ESP_ERR_INVALID_VERSION;
+#if ENTRANCE_LIGHTS
+        /* Admit the worker before opening an OTA transaction. It blocks on
+           release_mutex until this request either commits its job or fails. */
+        if (err == ESP_OK)
+            err = start_worker_locked();
+#endif
+        if (err == ESP_OK)
+            err = ota_begin(available.size, available.hash, available.version, ticket);
         if (err == ESP_OK) {
             installing = true;
             install_requested = true;

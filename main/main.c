@@ -2,6 +2,7 @@
 #include "display.h"
 #include "arcade.h"
 #include "relay.h"
+#include "lights_integration.h"
 #include "esp_log.h"
 
 void app_main(void)
@@ -23,6 +24,7 @@ void app_main(void)
     ota_init();
     esp_err_t arcade_err = arcade_prepare();
     esp_err_t relay_err = relay_prepare();
+    esp_err_t lights_err = lights_prepare();
     health_start(); /* Trial deadline is armed before networking starts. */
     err = net_init();
     if (err == ESP_OK)
@@ -38,6 +40,8 @@ void app_main(void)
     }
     if (relay_err == ESP_OK && relay_start() != ESP_OK)
         diag_event("Relay unavailable; local arcade remains available");
+    if (lights_err != ESP_OK || lights_start() != ESP_OK)
+        diag_event("Lighting unavailable; display and management remain active");
     release_start();
     ESP_LOGI("boot", "Management ready. Open https://192.168.4.1 on the device hotspot.");
 }

@@ -1,4 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
-set(PROJECT_VER "1.0.0")
+set(PROJECT_VER "1.1.0")
+get_filename_component(HUB_REPOSITORY "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+set(EXTRA_COMPONENT_DIRS "${HUB_REPOSITORY}/managed_components/espressif__cjson")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(203-usb-wifi-hub)

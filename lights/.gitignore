@@ -1,0 +1,5 @@
+.build/
+.idf-build/
+.cache/
+.swiftpm/
+build/

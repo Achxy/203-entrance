@@ -1,4 +1,5 @@
 #include "frame.h"
+#include "wiz_diag.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
@@ -25,6 +26,9 @@ static uint64_t ack_at, contact_at, reconnect_at, byte_at;
 static uint8_t tx[HUB_HEADER+HUB_MAX], frame[HUB_HEADER+HUB_MAX], network_data[HUB_MAX];
 static size_t used;
 static uint32_t corrupt_frames, bytes_up, bytes_down;
+static hd_state_t diagnostic;
+static int diagnostic_socket = -1;
+static uint8_t diagnostic_packet[HD_PACKET_MAX+1];
 static uint64_t now_ms(void) { return esp_timer_get_time()/1000ULL; }
 
 static bool emit(uint8_t type, uint32_t id, const void *p, size_t n)
@@ -44,6 +48,70 @@ static void reply(uint8_t type, uint32_t id, bool ok, const char *reason)
     int n=snprintf(json,sizeof(json),"{\"ok\":%s,\"reason\":\"%s\"}",ok?"true":"false",reason);
     emit(type|0x80,id,json,n);
 }
+static bool diagnostic_emit(void *context,uint8_t kind,uint32_t id,const void *data,size_t n)
+{ (void)context;return emit(kind,id,data,n); }
+static bool diagnostic_send(void *context,uint32_t ip,const char *data,size_t n)
+{
+    (void)context;
+    esp_netif_ip_info_t current={0};
+    if(!has_ip || diagnostic_socket<0 || now_ms()>=diagnostic.deadline ||
+       esp_netif_get_ip_info(station,&current)!=ESP_OK ||
+       ntohl(current.ip.addr)!=diagnostic.local_ip ||
+       ntohl(current.netmask.addr)!=diagnostic.netmask ||
+       (ip!=diagnostic.broadcast && !hd_peer(&diagnostic,ip)))return false;
+    struct sockaddr_in target={.sin_family=AF_INET,.sin_port=htons(38899),
+        .sin_addr.s_addr=htonl(ip)};
+    return sendto(diagnostic_socket,data,n,0,(struct sockaddr *)&target,sizeof(target))==(ssize_t)n;
+}
+static void diagnostic_begin(uint32_t id,const uint8_t *p,size_t n)
+{
+    if(peer>=0 || diagnostic.active){reply(WIZ_QUERY,id,false,"hub_busy");return;}
+    if(!has_ip || n<2 || p[0]!=1 || p[1]<1 || p[1]>HD_MAX_TARGETS ||
+       n!=2u+6u*p[1]){reply(WIZ_QUERY,id,false,"invalid_diagnostic_request");return;}
+    esp_netif_ip_info_t ip={0};
+    hd_io_t io={NULL,diagnostic_send,diagnostic_emit};
+    if(esp_netif_get_ip_info(station,&ip)!=ESP_OK ||
+       !hd_start(&diagnostic,&io,id,ntohl(ip.ip.addr),ntohl(ip.netmask.addr),
+                 p+2,p[1],now_ms())){reply(WIZ_QUERY,id,false,"private_network_required");return;}
+    diagnostic_socket=socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);
+    struct ifreq interface={0};
+    struct sockaddr_in local={.sin_family=AF_INET,.sin_port=0,.sin_addr.s_addr=ip.ip.addr};
+    int yes=1;
+    if(diagnostic_socket<0 ||
+       esp_netif_get_netif_impl_name(station,interface.ifr_name)!=ESP_OK ||
+       setsockopt(diagnostic_socket,SOL_SOCKET,SO_BINDTODEVICE,&interface,sizeof(interface))!=0 ||
+       setsockopt(diagnostic_socket,SOL_SOCKET,SO_BROADCAST,&yes,sizeof(yes))!=0 ||
+       bind(diagnostic_socket,(struct sockaddr *)&local,sizeof(local))!=0 ||
+       fcntl(diagnostic_socket,F_SETFL,O_NONBLOCK)<0){
+        if(diagnostic_socket>=0)close(diagnostic_socket);
+        diagnostic_socket=-1;diagnostic.active=false;
+        reply(WIZ_QUERY,id,false,"diagnostic_socket_failed");return;
+    }
+    reply(WIZ_QUERY,id,true,"diagnostic_started");
+}
+static void diagnostic_tick(void)
+{
+    if(diagnostic.active){
+        esp_netif_ip_info_t ip={0};
+        if(!has_ip || esp_netif_get_ip_info(station,&ip)!=ESP_OK ||
+           ntohl(ip.ip.addr)!=diagnostic.local_ip || ntohl(ip.netmask.addr)!=diagnostic.netmask)
+            hd_stop(&diagnostic,"wifi_changed");
+    }
+    for(unsigned i=0;i<4 && diagnostic.active;++i){
+        struct sockaddr_in source={0};socklen_t size=sizeof(source);
+        ssize_t n=recvfrom(diagnostic_socket,diagnostic_packet,sizeof(diagnostic_packet),
+                          MSG_DONTWAIT,(struct sockaddr *)&source,&size);
+        if(n<0){
+            if(errno!=EAGAIN && errno!=EWOULDBLOCK)hd_stop(&diagnostic,"receive_failed");
+            break;
+        }
+        if(size==sizeof(source) && source.sin_family==AF_INET)
+            hd_receive(&diagnostic,ntohl(source.sin_addr.s_addr),ntohs(source.sin_port),
+                       diagnostic_packet,(size_t)n,now_ms());
+    }
+    hd_poll(&diagnostic,now_ms());
+    if(!diagnostic.active && diagnostic_socket>=0){close(diagnostic_socket);diagnostic_socket=-1;}
+}
 static void wifi_event(void *arg, esp_event_base_t base, int32_t event, void *data)
 {
     (void)arg;
@@ -61,10 +129,10 @@ static void status(uint32_t id)
     wifi_ap_record_t ap={0}; esp_wifi_sta_get_ap_info(&ap);
     char json[400];
     int n=snprintf(json,sizeof(json),
-        "{\"protocol\":1,\"firmware\":\"1.0.0\",\"mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\","
-        "\"connected\":%s,\"ip\":\"" IPSTR "\",\"rssi\":%d,\"wifi_reason\":%u,"
+        "{\"protocol\":1,\"firmware\":\"1.1.0\",\"mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\","
+        "\"connected\":%s,\"ip\":\"" IPSTR "\",\"netmask\":\"" IPSTR "\",\"rssi\":%d,\"wifi_reason\":%u,"
         "\"heap\":%lu,\"uptime_ms\":%llu,\"corrupt_frames\":%lu,\"bytes_up\":%lu,\"bytes_down\":%lu}",
-        mac[0],mac[1],mac[2],mac[3],mac[4],mac[5],has_ip?"true":"false",IP2STR(&ip.ip),
+        mac[0],mac[1],mac[2],mac[3],mac[4],mac[5],has_ip?"true":"false",IP2STR(&ip.ip),IP2STR(&ip.netmask),
         ap.rssi,wifi_reason,(unsigned long)esp_get_free_heap_size(),now_ms(),
         (unsigned long)corrupt_frames,(unsigned long)bytes_up,(unsigned long)bytes_down);
     emit(HELLO|0x80,id,json,n);
@@ -151,6 +219,9 @@ static void dispatch(uint8_t kind,uint32_t id,uint8_t *p,size_t n)
 {
     contact_at=now_ms();
     if (kind==HELLO && !n) status(id);
+    else if (diagnostic.active && (kind==JOIN || kind==OPEN || kind==SCAN || kind==WIZ_QUERY))
+        reply(kind,id,false,"diagnostic_busy");
+    else if (kind==WIZ_QUERY) diagnostic_begin(id,p,n);
     else if (kind==JOIN) { join(id,p,n); memset(p,0,n); }
     else if (kind==OPEN) open_peer(id,p,n);
     else if (kind==SCAN) scan(id,p,n);
@@ -170,11 +241,11 @@ static void consume(uint8_t b)
     frame[used++]=b;
     if (used<HUB_HEADER) return;
     size_t n=(size_t)frame[6] | (size_t)frame[7]<<8;
-    if (frame[4]!=1 || n>HUB_MAX) { used=0; corrupt_frames++; close_peer(); return; }
+    if (frame[4]!=1 || n>HUB_MAX) { used=0; corrupt_frames++; close_peer(); hd_stop(&diagnostic,"usb_corrupt"); return; }
     if (used<HUB_HEADER+n) return;
     uint32_t crc=hub_crc(hub_crc(0,frame,12),frame+HUB_HEADER,n);
     if (crc==hub_u32(frame+12)) dispatch(frame[5],hub_u32(frame+8),frame+HUB_HEADER,n);
-    else { corrupt_frames++; close_peer(); }
+    else { corrupt_frames++; close_peer(); hd_stop(&diagnostic,"usb_corrupt"); }
     used=0;
 }
 void app_main(void)
@@ -200,7 +271,8 @@ void app_main(void)
         int n=usb_serial_jtag_read_bytes(input,sizeof(input),pdMS_TO_TICKS(10));
         for (int i=0;i<n;i++) consume(input[i]);
         uint64_t now=now_ms();
-        if (used && now-byte_at>1500) { used=0; corrupt_frames++; close_peer(); }
+        if (used && now-byte_at>1500) { used=0; corrupt_frames++; close_peer(); hd_stop(&diagnostic,"usb_corrupt"); }
+        diagnostic_tick();
         if (configured && !has_ip && now>=reconnect_at) {
             esp_wifi_connect(); reconnect_at=now+10000;
         }

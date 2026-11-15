@@ -1,0 +1,98 @@
+{
+  "method": "getModelConfig",
+  "env": "pro",
+  "result": {
+    "devTotal": 1,
+    "headTotal": 1,
+    "swHead": 0,
+    "ps": 3,
+    "hasGradient": 1,
+    "nightLightOff": 0,
+    "minDimLevel": 10,
+    "devices": 1,
+    "devType": 0,
+    "lightType": 1,
+    "pwmFreq": 1000,
+    "pwmRes": 13,
+    "pwmRange": [
+      0,
+      100
+    ],
+    "pwmRanges": [
+      0,
+      1000,
+      0,
+      1000,
+      0,
+      1000,
+      0,
+      1000,
+      0,
+      1000
+    ],
+    "wcr": 80,
+    "nowc": 1,
+    "cctRange": [
+      2200,
+      2700,
+      6500,
+      6500
+    ],
+    "renderFactor": [
+      255,
+      110,
+      140,
+      255,
+      0,
+      0,
+      40,
+      135,
+      255,
+      255
+    ],
+    "wizc1": {
+      "mode": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "wizc2": {
+      "mode": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "drvIface": 4,
+    "i2cDrv": [
+      {
+        "chip": "BP5758D",
+        "addr": 255,
+        "freq": 200,
+        "curr": [
+          9,
+          8,
+          6,
+          24,
+          24
+        ],
+        "output": [
+          3,
+          2,
+          1,
+          4,
+          5
+        ]
+      }
+    ]
+  }
+}

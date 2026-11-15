@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#101216">
+  <meta name="description" content="A little control over the light. Private, permission-based lighting for Room 203, from any browser.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://203-arcade-relay.achyuthanugraha.workers.dev wss://203-arcade-relay.achyuthanugraha.workers.dev; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>203 · Lights</title>
+  <link rel="icon" href="./assets/bulb.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./src/app.mjs"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to controls</a>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="203 Lights home"><span class="brand-mark">203</span><span>Lights<span class="brand-subtitle">A little atmosphere.</span></span></a>
+      <div class="top-actions"><span class="connection-status" id="connection-status"><span class="status-dot"></span>Not connected</span><button class="icon-button" id="theme-toggle" aria-label="Switch color theme" title="Switch color theme">◐</button><button class="quiet" id="logout" hidden>Disconnect</button></div>
+    </header>
+    <div id="preview-banner" class="preview-banner" hidden><strong>Interface preview</strong><span>Sample lights. Nothing here controls the room.</span><a href="./">Exit preview</a></div>
+    <main id="main">
+      <section id="connect-panel" class="connect-layout" aria-labelledby="welcome-title">
+        <div class="welcome">
+          <div class="eyebrow">ROOM 203</div><h1 id="welcome-title">Set the<br>right mood.</h1>
+          <p>A warm corner for winding down.<br>A brighter desk for what’s next.</p>
+          <div class="light-study" aria-hidden="true"><span class="study-disc"></span><span class="study-stem"></span><span class="study-base"></span></div>
+          <p class="welcome-note">Your browser, your room.<br>No app installation or Wi-Fi switching.</p>
+        </div>
+        <div class="connect-card">
+          <h2>Come on in.</h2><p class="muted">Use the access shared by the room’s owner.</p>
+          <form id="connect-form">
+            <fieldset class="role-picker"><legend class="sr-only">Access type</legend><label><input type="radio" name="role" value="guest" checked><span>Guest</span></label><label><input type="radio" name="role" value="owner"><span>Owner</span></label></fieldset>
+            <label class="field" id="name-field">Your name<input id="guest-name" name="name" autocomplete="nickname" maxlength="32" placeholder="What should we call you?" required></label>
+            <label class="field"><span id="credential-label">Room password</span><input id="credential" name="credential" type="password" autocomplete="off" required minlength="1" maxlength="256" spellcheck="false" autocapitalize="none" aria-describedby="access-note"></label>
+            <p id="access-note" class="field-note">Access stays in this tab and is cleared when you disconnect.</p>
+            <button class="primary wide" id="connect-button" type="submit">Connect to the room <span aria-hidden="true">↗</span></button>
+            <p id="connect-feedback" class="form-feedback" role="status" aria-live="polite"></p>
+          </form>
+          <details class="identity-details"><summary>Room identity</summary><p>The room’s public identity is pinned in this app. Your password is never sent to a website account.</p><p id="identity-name" class="mono"></p><label class="field">Import an owner-issued room file<input type="file" id="descriptor-file" accept="application/json,.json"></label><p id="descriptor-feedback" class="field-note">Only import a file received directly from the owner.</p></details>
+          <div class="connect-bottom"><span id="gateway-status">Checking room availability…</span><a href="?preview=1">Explore a preview</a></div>
+        </div>
+      </section>
+      <section id="room-panel" hidden>
+        <div class="room-heading"><div><div class="eyebrow">YOUR ROOM, YOUR LIGHT</div><h1>Room 203<span class="room-dot">.</span></h1><p id="room-summary" class="muted">Reading the room…</p></div><div class="heading-actions"><button id="refresh" class="quiet">↻ <span>Refresh</span></button><button id="reconnect" class="primary" hidden>Reconnect</button></div></div>
+        <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+        <nav class="tabs" aria-label="Room sections"><button data-tab="lights" aria-current="page">Lights</button><button data-tab="access" data-owner hidden>Guest access</button><button data-tab="setup" data-owner hidden>Room setup</button></nav>
+        <section id="lights-tab" class="tab-panel" aria-label="Light controls">
+          <div class="section-toolbar"><div class="group-chips" id="groups" aria-label="Light groups"></div><button class="quiet small" id="manage-groups">Edit groups</button></div>
+          <div class="controls-layout">
+            <section class="lights-list" aria-labelledby="lights-title"><div class="section-label"><h2 id="lights-title">Your lights</h2><span id="light-count"></span></div><div id="light-list"></div><p class="field-note">Choose a light, or select several to adjust them together.</p></section>
+            <section class="control-card" aria-labelledby="selection-title">
+              <div class="control-heading"><div><span class="eyebrow" id="selection-count">ALL LIGHTS</span><h2 id="selection-title">Room lighting</h2></div><div class="power-controls" role="group" aria-label="Selected lights power"><button data-patch-power="true" aria-label="Turn selected lights on">On</button><button data-patch-power="false" aria-label="Turn selected lights off">Off</button></div></div>
+              <p id="restriction" class="inline-note" hidden></p>
+              <div class="range-control" id="brightness-control"><div class="range-label"><label for="brightness">Brightness</label><output for="brightness" id="brightness-value">—</output></div><input id="brightness" type="range" min="1" max="100" step="1" value="50"><div class="range-ends"><span>Soft</span><span>Bright</span></div></div>
+              <div class="mode-tabs" role="group" aria-label="Color control mode"><button data-mode="white" aria-pressed="true">White</button><button data-mode="color" aria-pressed="false">Color</button><button data-mode="scene" aria-pressed="false">Scenes</button></div>
+              <div id="white-mode" class="mode-panel"><div class="range-label"><label for="temperature">Warmth</label><output id="temperature-value" for="temperature">—</output></div><input id="temperature" class="temperature-range" type="range" min="2200" max="6500" step="100" value="4000"><div class="range-ends"><span>Warm</span><span>Cool</span></div><div class="preset-row"><button data-kelvin="2700">Cozy</button><button data-kelvin="4000">Balanced</button><button data-kelvin="6500">Daylight</button></div></div>
+              <div id="color-mode" class="mode-panel" hidden><label class="color-picker">Pick a color<input id="color" type="color" value="#ffb45f"><span id="color-value" class="mono">#ffb45f</span></label><div class="swatch-row" id="swatches" aria-label="Color presets"></div></div>
+              <div id="scene-mode" class="mode-panel" hidden><div class="scene-grid" id="scene-list"></div><div id="speed-control" class="range-control"><div class="range-label"><label for="speed">Effect speed</label><output id="speed-value" for="speed">—</output></div><input id="speed" type="range" min="10" max="200" step="10" value="100"></div></div>
+              <p id="mode-unavailable" class="field-note" hidden>This mode isn’t available for every selected light. Choose a smaller group.</p>
+              <label id="hold-control" class="check-row" data-owner hidden><input id="hold-settings" type="checkbox">Keep my next change for 30 seconds<span class="field-note">Guests wait while your settings take precedence.</span></label>
+              <div class="control-footer"><span id="observed-label">Waiting for current state</span><span id="selection-state"></span></div>
+            </section>
+          </div>
+          <section id="change-status" class="change-status" aria-live="polite" hidden><span class="status-dot"></span><div><strong id="change-title">Updating lights</strong><p id="change-description"></p></div><button id="check-change" class="quiet" hidden>Check status</button></section>
+        </section>
+        <section id="access-tab" class="tab-panel" hidden aria-labelledby="access-title">
+          <div class="section-intro"><h2 id="access-title">Make room for guests.</h2><p class="muted">Share control, keep the final say.</p></div>
+          <p class="inline-note" id="access-scope-note">Guest pauses, revocations and owner precedence apply to this site and our app. With <strong>Allow all controls</strong> selected in WiZ, other devices on the bulbs’ Wi-Fi can still change the lights directly. Importing a signing key does not close that route.</p>
+          <div class="settings-grid"><section class="settings-card"><h3>Guest controls</h3><p id="freeze-state" class="muted">Guests can adjust the room through our app and site.</p><label class="field">Pause for<select id="freeze-duration"><option value="900000">15 minutes</option><option value="3600000">1 hour</option><option value="86400000">24 hours</option></select></label><div class="button-row"><button id="freeze" class="primary">Pause guests</button><button id="unfreeze" class="quiet">Resume guests</button></div><p class="field-note">Pauses our guest controls for all enrolled lights. The pause survives a gateway restart until you clear it; it does not change WiZ’s local-access setting.</p></section>
+            <section class="settings-card"><h3>Change the room password</h3><p class="muted">A new password ends every existing guest session.</p><form id="password-form"><label class="field">New password<input id="new-password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label><label class="field">Confirm password<input id="confirm-password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label><button class="quiet" type="submit">Change password & revoke guests</button></form></section></div>
+          <section class="settings-card sessions-card"><div class="section-label"><h3>Guest sessions</h3><button class="quiet small" id="refresh-sessions">Refresh sessions</button></div><p class="field-note">Names are self-reported. Revoking a session doesn’t ban someone who still knows the password.</p><div id="session-list" class="session-list"><p class="muted">Load sessions to see who has access.</p></div><button class="danger quiet" id="revoke-all">Revoke all guest sessions</button></section>
+        </section>
+        <section id="setup-tab" class="tab-panel" hidden aria-labelledby="setup-title">
+          <div class="section-intro"><h2 id="setup-title">A home for every light.</h2><p class="muted">Bring WiZ lights onto the room network, then adopt them here.</p></div>
+          <p class="inline-note" id="signing-scope-note">A home key lets our gateway sign its commands. It does not prove the bulbs reject other clients. Restrictions across the Wi-Fi network require both <strong>Allow only verified controls</strong> in WiZ and a physical check that unsigned commands are rejected. This site does not change that setting.</p>
+          <div class="setup-steps"><span>1</span><div><h3>Put the light on the room Wi-Fi</h3><p>Use the WiZ app to pair it to the room’s 2.4 GHz network and enable <strong>Allow local communication</strong>. Your choice of all or verified-only controls is left unchanged here.</p><p>The WiZ app may need Internet during setup. The room hotspot provides local control only; complete WiZ setup before discovery.</p></div><span>2</span><div><h3>Import the WiZ local key</h3><p>The room owner supplies the local-integration key below. It stays on the gateway and is used to sign our commands, not to change the bulb’s access policy.</p></div><span>3</span><div><h3>Find it, name it, try it</h3><p>Discovery reads connected devices. It doesn’t blink, reset, or move a light.</p></div></div>
+          <div class="settings-grid"><section class="settings-card"><h3>WiZ local-integration key</h3><form id="home-key-form"><label class="field">32 hexadecimal characters<input id="home-key" type="password" autocomplete="off" spellcheck="false" autocapitalize="none" pattern="[0-9a-fA-F]{32}" minlength="32" maxlength="32" required></label><label class="field">Or select a local WiZ JSON export<input id="wiz-export-file" type="file" accept="application/json,.json"></label><p id="wiz-export-feedback" class="field-note">The file stays in this browser. Only its home key is used. Invitation links are not exports.</p><button class="quiet" type="submit">Import securely</button></form><p class="field-note">This is separate from your owner key. The field is cleared after import. Export layouts may vary; you can always paste the key.</p></section><section class="settings-card"><h3>Find new lights</h3><p class="muted">Only devices identified on the gateway’s Wi-Fi can be enrolled.</p><div class="button-row"><button id="discover" class="primary">Discover lights</button><button id="check-discovery" class="quiet">Check results</button><button id="cancel-discovery" class="quiet">Stop</button></div><p id="discovery-status" class="field-note"></p></section></div>
+          <div id="candidate-list"></div><section class="settings-card"><h3>Enrolled lights</h3><div id="enrolled-list"></div><p class="field-note">Removing a light ends gateway control; it does not factory-reset the bulb. Verify new lights physically before relying on them.</p></section>
+        </section>
+      </section>
+    </main>
+    <footer class="site-footer"><span>203 · Small room. Good light.</span><span>Access stays in this tab.</span></footer>
+  </div>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title"><form method="dialog"><h2 id="confirm-title"></h2><p id="confirm-description" class="muted"></p><div class="button-row dialog-actions"><button value="cancel" class="quiet">Cancel</button><button value="confirm" class="primary" id="confirm-action">Continue</button></div></form></dialog>
+  <dialog id="group-dialog" aria-labelledby="group-title"><h2 id="group-title">Groups for this visit</h2><p class="muted">Create a shortcut from your selected lights. Groups stay in this tab.</p><form id="group-form"><label class="field">Group name<input id="group-name" maxlength="32" required placeholder="Study corner"></label><p id="group-members" class="field-note"></p><button class="primary" type="submit">Save group</button></form><div id="saved-groups"></div><form method="dialog"><button class="quiet wide">Done</button></form></dialog>
+  <noscript><p class="noscript">Enable JavaScript to authenticate and control the room. No lights are connected on this page.</p></noscript>
+</body>
+</html>

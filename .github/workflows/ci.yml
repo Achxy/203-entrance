@@ -11,9 +11,12 @@ concurrency:
 jobs:
   firmware:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.11.0'
       - name: Install host build prerequisites
         run: sudo apt-get update && sudo apt-get install -y git cmake ninja-build python3.12 python3.12-venv libusb-1.0-0 build-essential zlib1g-dev
       - name: Install pinned SDK and create disposable signing key
@@ -28,6 +31,10 @@ jobs:
         run: .tools/idf-tools/python_env/idf6.1_py3.12_env/bin/python tools/check_tls_bundle.py
       - name: Build the separate USB-to-Wi-Fi maintenance hub
         run: ./hubctl build
+      - name: Check lighting policy, protocol, storage, display and web code
+        run: bash lights/scripts/check-all.sh --skip-swift --skip-oracle
+      - name: Build isolated lighting candidate with a disposable key
+        run: .tools/idf-tools/python_env/idf6.1_py3.12_env/bin/python lights/tools/build_candidate.py --version 0.1.0-lights.ci.${{ github.run_number }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: disposable-key-test-firmware
@@ -37,7 +44,48 @@ jobs:
             build/bootloader/bootloader.bin
             build/partition_table/partition-table.bin
             .local/build-provenance.json
+            .local/lights-candidate/build/203-entrance.bin
+            .local/lights-candidate/build/203-entrance.elf
+            .local/lights-candidate/summary.json
+            .local/lights-candidate/type-sizes.json
           include-hidden-files: true
+          retention-days: 7
+  lighting-native:
+    runs-on: macos-26
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12.10'
+      - name: Fetch the pinned SDK source for independent wire fixtures
+        run: |
+          mkdir -p .tools
+          git clone --depth 1 --branch v6.1 https://github.com/espressif/esp-idf.git .tools/esp-idf
+          test "$(git -C .tools/esp-idf rev-parse HEAD)" = fff9895c82d744c7237be8847347bdd1b07c6643
+      - name: Check native control models
+        run: swift run --package-path lights/core --disable-sandbox -c release LightsCoreChecks
+      - name: Check native security, framing and menulet
+        run: |
+          bash lights/security/scripts/check.sh
+          sh lights/firmware/ble/check-swift.sh
+          bash lights/macos/scripts/check.sh
+      - name: Exercise the encrypted native gateway adapter
+        run: |
+          bash lights/security/scripts/bootstrap-test-env.sh
+          bash lights/security/scripts/check-gateway-wire.sh
+          bash lights/security/scripts/check-probe.sh
+      - name: Build and verify the development app bundle
+        run: bash lights/macos/scripts/build-app.sh release --universal
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: 203-lights-universal-development
+          path: |
+            lights/macos/build/universal/203-Lights-universal-development.zip
+            lights/macos/build/universal/203-Lights-universal-development.zip.sha256
+            lights/macos/build/universal/BUILD-MANIFEST.json
           retention-days: 7
   console:
     runs-on: ubuntu-24.04

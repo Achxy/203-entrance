@@ -1,5 +1,6 @@
 #include "arcade.h"
 #include "relay.h"
+#include "lights_integration.h"
 #include "protocol.h"
 #include "mbedtls/base64.h"
 #include "mbedtls/pk.h"
@@ -98,12 +99,15 @@ bool arcade_profile_validate(const char *profile, cJSON **decoded)
         psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_VERIFY_HASH);
         psa_set_key_algorithm(&attr, PSA_ALG_ECDSA(PSA_ALG_SHA_256));
         mbedtls_svc_key_id_t key = 0;
+        if (!lights_peak_begin())
+            return false;
         psa_status_t status = psa_import_key(&attr, public_key, sizeof(public_key), &key);
         if (status == PSA_SUCCESS) {
             status = psa_verify_hash(key, PSA_ALG_ECDSA(PSA_ALG_SHA_256), hash, 32, signature, 64);
             psa_destroy_key(key);
         }
         psa_reset_key_attributes(&attr);
+        lights_peak_end();
         if (status != PSA_SUCCESS)
             return false;
     }
@@ -150,6 +154,8 @@ bool arcade_receipt_sign(const char *payload, char out[ARCADE_RECEIPT_MAX])
     size_t siglen = 0;
     sha256_bytes(message, length, hash);
     mbedtls_pk_context key;
+    if (!lights_peak_begin())
+        return false;
     mbedtls_pk_init(&key);
     int err = mbedtls_pk_parse_key(&key, (const uint8_t *)identity.private_key,
                                    strlen(identity.private_key) + 1, NULL, 0);
@@ -157,6 +163,7 @@ bool arcade_receipt_sign(const char *payload, char out[ARCADE_RECEIPT_MAX])
         err =
             mbedtls_pk_sign(&key, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig, sizeof(sig), &siglen);
     mbedtls_pk_free(&key);
+    lights_peak_end();
     if (err)
         return false;
     memcpy(out, "R1.", 3);
@@ -173,12 +180,15 @@ bool arcade_device_sign(const char *message, char signature[161])
     size_t size = 0;
     sha256_bytes(message, strlen(message), hash);
     mbedtls_pk_context key;
+    if (!lights_peak_begin())
+        return false;
     mbedtls_pk_init(&key);
     int err = mbedtls_pk_parse_key(&key, (const uint8_t *)identity.private_key,
                                    strlen(identity.private_key) + 1, NULL, 0);
     if (!err)
         err = mbedtls_pk_sign(&key, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig, sizeof(sig), &size);
     mbedtls_pk_free(&key);
+    lights_peak_end();
     if (err || size > 80)
         return false;
     hex_encode(sig, size, signature);

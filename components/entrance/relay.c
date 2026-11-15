@@ -1,6 +1,7 @@
 #include "relay.h"
 #include "relay_frame.h"
 #include "relay_transport.h"
+#include "lights_integration.h"
 #include "arcade.h"
 #include "protocol.h"
 #include "esp_websocket_client.h"
@@ -19,9 +20,19 @@ typedef struct {
     char host[128];
 } relay_config_t;
 typedef struct {
+#if ENTRANCE_LIGHTS
+    char text[RELAY_INPUT_MAX + 1];
+    size_t length;
+#else
     size_t length;
     char text[RELAY_INPUT_MAX + 1];
+#endif
 } relay_message_t;
+#if ENTRANCE_LIGHTS
+_Static_assert(offsetof(relay_message_t, text) == offsetof(relay_frame_t, bytes), "message text prefix");
+_Static_assert(offsetof(relay_message_t, length) == offsetof(relay_frame_t, used), "message size prefix");
+_Static_assert(sizeof(relay_message_t) == offsetof(relay_frame_t, frame_start), "complete message prefix");
+#endif
 static relay_config_t config;
 static SemaphoreHandle_t mutex;
 static QueueHandle_t incoming;
@@ -36,7 +47,9 @@ static _Atomic int last_tls_error, last_tls_stack_error, last_tls_flags, last_ht
     last_socket_error;
 static uint64_t change_at;
 static relay_frame_t frame;
+#if !ENTRANCE_LIGHTS
 static relay_message_t assembled;
+#endif
 static uint64_t milliseconds(void)
 {
     return esp_timer_get_time() / 1000ULL;
@@ -47,6 +60,8 @@ bool relay_enabled(void)
 }
 bool relay_quiesce(void)
 {
+    if (!lights_quiesce())
+        return false;
     if (!mutex)
         return true;
     xSemaphoreTake(mutex, portMAX_DELAY);
@@ -62,6 +77,7 @@ bool relay_quiesce(void)
 }
 void relay_resume(void)
 {
+    lights_resume();
     if (!mutex)
         return;
     xSemaphoreTake(mutex, portMAX_DELAY);
@@ -179,9 +195,15 @@ static void event(void *arg, esp_event_base_t base, int32_t id, void *event_data
         return;
     }
     if (done == 1) {
+#if ENTRANCE_LIGHTS
+        /* FreeRTOS copies the completed prefix before the next fragment can
+           reuse it; every queued message still owns its complete payload. */
+        if (xQueueSend(incoming, &frame, 0) != pdTRUE) {
+#else
         assembled.length = frame.used;
         memcpy(assembled.text, frame.bytes, frame.used + 1);
         if (xQueueSend(incoming, &assembled, 0) != pdTRUE) {
+#endif
             fatal = true;
             rejected++;
         }
@@ -252,6 +274,9 @@ static bool message(esp_websocket_client_handle_t client, const relay_message_t 
         authenticated = true;
         phase = 4;
         diag_event("Internet game relay authenticated");
+    } else if ((!strcmp(type, "light_request") || !strcmp(type, "light_disconnect")) && authenticated) {
+        bool handled = false;
+        ok = lights_relay_message(j, &handled) && handled;
     } else if (!strcmp(type, "request") && authenticated) {
         const char *op = text(j, "op", 12), *token = text(j, "token", 32),
                    *body = text(j, "body", 1024), *connection = text(j, "connection", 32),
@@ -313,6 +338,7 @@ static void task(void *arg)
     }
     for (;;) {
         uint64_t now = milliseconds();
+        lights_poll_recovery(now);
         bool apply = false;
         relay_config_t snapshot;
         xSemaphoreTake(mutex, portMAX_DELAY);
@@ -327,6 +353,7 @@ static void task(void *arg)
         if (client && (!ready || fatal || apply || (!authenticated && now - started > 15000))) {
             authenticated = connected = false;
             arcade_relay_disconnected();
+            lights_relay_disconnected();
             esp_websocket_client_stop(client);
             esp_websocket_client_destroy(client);
             relay_transport_destroy();
@@ -435,6 +462,8 @@ static void task(void *arg)
             cJSON_AddNumberToObject(j, "v", 1);
             cJSON_AddStringToObject(j, "type", "pulse");
             cJSON_AddNumberToObject(j, "lease", (double)milliseconds());
+            if (lights_relay_ready())
+                cJSON_AddNumberToObject(j, "light_protocol", 1);
             if (now >= public_at) {
                 cJSON *view = arcade_public_status();
                 char *data = cJSON_PrintUnformatted(view);
@@ -448,6 +477,11 @@ static void task(void *arg)
                 fatal = true;
             pulse = now + 250;
             failures = 0;
+        }
+        if (client && authenticated && !fatal) {
+            cJSON *light_reply = lights_relay_next_reply();
+            if (light_reply && !send_json(client, light_reply))
+                fatal = true;
         }
         if (!client || fatal)
             vTaskDelay(pdMS_TO_TICKS(100));

@@ -2,6 +2,7 @@
 #include "display.h"
 #include "arcade.h"
 #include "relay.h"
+#include "lights_integration.h"
 #include "protocol.h"
 #include "auth.h"
 #include "esp_https_server.h"
@@ -274,6 +275,25 @@ static esp_err_t route(httpd_req_t *r)
 
     if (!strcmp(uri, "/api/v1/soak") && r->method == HTTP_GET)
         return json_response(r, diag_soak(), "200 OK");
+    if (!strcmp(uri, "/api/v1/lights") && r->method == HTTP_GET)
+        return json_response(r, lights_status(), "200 OK");
+    if (!strcmp(uri, "/api/v1/lights/provision") && r->method == HTTP_POST) {
+        cJSON *j = read_json(r);
+        esp_err_t err = j ? lights_provision(j) : ESP_ERR_INVALID_ARG;
+        for (cJSON *p = j ? j->child : NULL; p; p = p->next)
+            if (cJSON_IsString(p)) memset(p->valuestring, 0, strlen(p->valuestring));
+        cJSON_Delete(j);
+        if (err != ESP_OK) return outcome(r, err);
+        return json_response(r, lights_status(), "202 Accepted");
+    }
+    if (!strcmp(uri, "/api/v1/lights/retry") && r->method == HTTP_POST) {
+        cJSON *j = read_json(r);
+        bool valid = cJSON_IsObject(j) && cJSON_GetArraySize(j) == 0;
+        cJSON_Delete(j);
+        esp_err_t err = valid ? lights_retry() : ESP_ERR_INVALID_ARG;
+        if (err != ESP_OK) return outcome(r, err);
+        return json_response(r, lights_status(), "202 Accepted");
+    }
     if (!strcmp(uri, "/api/v1/arcade/relay") && r->method == HTTP_GET)
         return json_response(r, relay_status(), "200 OK");
     if (!strcmp(uri, "/api/v1/arcade/relay") && r->method == HTTP_PUT) {

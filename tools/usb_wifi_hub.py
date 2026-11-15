@@ -6,9 +6,11 @@ import argparse
 import hashlib
 import ipaddress
 import json
+import math
 import os
 from pathlib import Path
 import queue
+import re
 import secrets
 import select
 import socket
@@ -17,12 +19,106 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_DATA = 2048
 HEADER = struct.Struct('<4sBBHII')
 HELLO, JOIN, OPEN, DATA, ACK, CLOSE, SCAN = range(1, 8)
+WIZ_QUERY, WIZ_META, WIZ_BODY, WIZ_DONE = 8, 0x89, 0x8a, 0x8b
+WIZ_METHODS = ('getSystemConfig', 'getModelConfig', 'getUserConfig', 'getPilot', 'getTime')
+PRIVATE_NETWORKS = tuple(ipaddress.IPv4Network(s) for s in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'))
+
+
+def mac_bytes(value):
+    if not isinstance(value, str) or not re.fullmatch(r'(?:[0-9a-fA-F]{12}|(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})', value):
+        raise ValueError('Invalid MAC address')
+    raw = bytes.fromhex(value.replace(':', ''))
+    if not any(raw) or raw[0] & 1:
+        raise ValueError('Invalid unicast MAC address')
+    return raw
+
+
+def strict_json(data, maximum=2048):
+    if not isinstance(data, (bytes, str)) or len(data) > maximum:
+        raise ValueError('Diagnostic JSON exceeds bound')
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError('Duplicate JSON key')
+            result[key] = value
+        return result
+    try:
+        result = json.loads(data, object_pairs_hook=pairs,
+                            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError('Invalid JSON number')))
+    except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError('Malformed diagnostic JSON') from exc
+    def bounds(value, depth=0):
+        if depth > (16 if maximum > 2048 else 8):
+            raise ValueError('Diagnostic JSON nesting exceeds bound')
+        if isinstance(value, dict):
+            return 1 + sum(bounds(k, depth+1) + bounds(v, depth+1) for k, v in value.items())
+        if isinstance(value, list):
+            return 1 + sum(bounds(v, depth+1) for v in value)
+        if isinstance(value, str) and ('\0' in value or any(0xd800 <= ord(c) <= 0xdfff for c in value)):
+            raise ValueError('Invalid diagnostic JSON string')
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError('Invalid JSON number')
+        return 1
+    if not isinstance(result, dict) or bounds(result) > (16384 if maximum > 2048 else 512):
+        raise ValueError('Invalid diagnostic JSON shape')
+    return result
+
+
+def home_allowlist(path):
+    # The owner-provided export is private input. Only MACs escape this function;
+    # no signing key, home ID, credentials or raw export are retained or emitted.
+    if path.stat().st_size > 1024*1024:
+        raise ValueError('Home export exceeds bound')
+    export = strict_json(path.read_bytes(), 1024*1024)
+    if export.get('version') != '1.0' or not isinstance(export.get('devices'), list):
+        raise ValueError('Unsupported home export schema')
+    devices = export['devices']
+    if not 1 <= len(devices) <= 8:
+        raise ValueError('Diagnostics support one to eight exported devices')
+    try:
+        macs = [mac_bytes(device['mac_address']) for device in devices]
+    except (KeyError, TypeError) as exc:
+        raise ValueError('Home export device has no valid MAC') from exc
+    if len(set(macs)) != len(macs):
+        raise ValueError('Home export has duplicate device MACs')
+    return macs
+
+
+def diagnostic_network(state):
+    ip = ipaddress.IPv4Address(state['ip'])
+    network = ipaddress.IPv4Network(f"{ip}/{state['netmask']}", strict=False)
+    if not any(network.subnet_of(parent) for parent in PRIVATE_NETWORKS) or not 8 <= network.prefixlen <= 30 or ip in (network.network_address, network.broadcast_address):
+        raise ValueError('Hub diagnostics require a private IPv4 subnet')
+    return ip, network
+
+
+def private_diagnostic(path, report):
+    parent = path.parent
+    if parent.is_symlink():
+        raise ValueError('Diagnostic directory must not be a symlink')
+    parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if parent.stat().st_uid != os.getuid():
+        raise ValueError('Diagnostic directory must belong to this user')
+    if parent.stat().st_mode & 0o077:
+        raise ValueError('Diagnostic directory must be private (mode 0700)')
+    fd, name = tempfile.mkstemp(prefix='.wiz-diagnostic-', dir=parent)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            json.dump(report, stream, ensure_ascii=True, indent=2, allow_nan=False)
+            stream.write('\n'); stream.flush(); os.fsync(stream.fileno())
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
 
 
 class HubCommandError(ConnectionError):
@@ -102,6 +198,7 @@ class Hub:
         self.lock = threading.Lock()
         self.write_lock = threading.Lock()
         self.pending = {}
+        self.streams = {}
         self.client = None
         self.connection = 0
         self.ack = threading.Event()
@@ -149,8 +246,11 @@ class Hub:
                 for kind, request, payload in decoder.feed(self.serial.read(4096)):
                     with self.lock:
                         pending = self.pending.get((kind, request))
+                        stream = self.streams.get(request)
                         client, connection = self.client, self.connection
-                    if pending is not None:
+                    if stream is not None and kind in (WIZ_QUERY | 128, WIZ_META, WIZ_BODY, WIZ_DONE):
+                        stream.put_nowait((kind, payload))
+                    elif pending is not None:
                         if pending.empty():
                             pending.put_nowait(payload)
                     elif kind == DATA and request == connection and client:
@@ -175,6 +275,78 @@ class Hub:
                 for response in self.pending.values():
                     if response.empty():
                         response.put_nowait(ConnectionError(self.failure or 'USB disconnected'))
+                for response in self.streams.values():
+                    try: response.put_nowait(ConnectionError('USB diagnostic stream disconnected'))
+                    except queue.Full: pass
+
+    def wiz_query(self, allowlist, state, timeout=30):
+        if not 1 <= len(allowlist) <= 8 or len(set(allowlist)) != len(allowlist):
+            raise ValueError('Invalid diagnostic allowlist')
+        for mac in allowlist:
+            if len(mac) != 6 or mac_bytes(mac.hex()) != mac:
+                raise ValueError('Invalid diagnostic MAC')
+        local_ip, network = diagnostic_network(state)
+        request = secrets.randbits(32) or 1
+        events = queue.Queue(maxsize=82)  # <=40 metadata/body pairs, start and completion.
+        with self.lock:
+            if self.client or self.streams:
+                raise RuntimeError('Hub is busy')
+            self.streams[request] = events
+        records, pending, started, seen, discovered = [], None, False, set(), {}
+        deadline = time.monotonic() + min(timeout, 35)
+        try:
+            self.send(WIZ_QUERY, request, bytes((1, len(allowlist))) + b''.join(allowlist))
+            while time.monotonic() < deadline:
+                try: event = events.get(timeout=max(.001, deadline-time.monotonic()))
+                except queue.Empty as exc: raise TimeoutError('Hub diagnostic deadline expired') from exc
+                if isinstance(event, Exception): raise event
+                kind, payload = event
+                if kind == WIZ_QUERY | 128:
+                    if started or pending or records: raise ValueError('Duplicate diagnostic start')
+                    reply = strict_json(payload)
+                    if reply.get('ok') is not True: raise HubCommandError('Diagnostic request rejected')
+                    started = True
+                elif not started:
+                    raise ValueError('Diagnostic event before start')
+                elif kind == WIZ_META:
+                    if pending is not None or len(payload) != 16 or payload[0] != 1 or payload[3] != 0:
+                        raise ValueError('Invalid diagnostic metadata')
+                    method, index = payload[1:3]
+                    ip, mac, length = ipaddress.IPv4Address(payload[4:8]), payload[8:14], int.from_bytes(payload[14:16], 'little')
+                    if method >= len(WIZ_METHODS) or index >= len(allowlist) or mac != allowlist[index] or not 1 <= length <= MAX_DATA:
+                        raise ValueError('Diagnostic identity or length mismatch')
+                    if ip not in network or ip in (local_ip, network.network_address, network.broadcast_address) or (index, method) in seen:
+                        raise ValueError('Unexpected diagnostic endpoint or duplicate reply')
+                    if method != 0 and discovered.get(index) != ip:
+                        raise ValueError('Diagnostic endpoint differs from discovery')
+                    pending = (method, index, ip, mac, length)
+                elif kind == WIZ_BODY:
+                    if pending is None or len(payload) != pending[4]:
+                        raise ValueError('Unmatched diagnostic body')
+                    method, index, ip, mac, _ = pending
+                    body = strict_json(payload)
+                    result, error = body.get('result'), body.get('error')
+                    if (body.get('method') != WIZ_METHODS[method] or
+                            (('result' in body) == ('error' in body)) or
+                            not isinstance(result if 'result' in body else error, dict)):
+                        raise ValueError('Diagnostic reply method or envelope mismatch')
+                    returned_mac = result.get('mac') if isinstance(result, dict) else None
+                    if returned_mac is not None and mac_bytes(returned_mac) != mac:
+                        raise ValueError('Diagnostic reply MAC mismatch')
+                    if isinstance(result, dict) and method in (0, 3) and returned_mac is None:
+                        raise ValueError('Diagnostic identity absent')
+                    records.append({'index': index, 'ip': str(ip), 'mac': mac.hex(), 'method': WIZ_METHODS[method], 'response': body})
+                    if method == 0: discovered[index] = ip
+                    seen.add((index, method)); pending = None
+                elif kind == WIZ_DONE:
+                    if pending is not None: raise ValueError('Incomplete diagnostic response')
+                    summary = strict_json(payload)
+                    if type(summary.get('replies')) is not int or summary['replies'] != len(records):
+                        raise ValueError('Diagnostic reply count mismatch')
+                    return {'records': records, 'summary': summary}
+            raise TimeoutError('Hub diagnostic deadline expired')
+        finally:
+            with self.lock: self.streams.pop(request, None)
 
     def _detach(self):
         with self.lock:
@@ -360,6 +532,66 @@ def scan(args):
         hub.close()
 
 
+def model_summary(model):
+    """Reported bounds only; a gradient flag is not implemented gradient control."""
+    summary = {}
+    # Newer firmware reports its extended temperature endpoints as cctRange.
+    # Preserve the original array and its source field rather than hiding the
+    # difference between a legacy white range and the extended range.
+    for field in ('cctRange', 'extRange', 'whiteRange'):
+        if field not in model:
+            continue
+        white = model[field]
+        if isinstance(white, list) and 2 <= len(white) <= 4 and all(type(v) is int and 1000 <= v <= 10000 for v in white):
+            summary['reported_white_range'] = white
+            summary['reported_white_range_field'] = field
+        break
+    dim = model.get('minDimLevel')
+    if type(dim) is int and 1 <= dim <= 100:
+        summary['reported_min_dimming'] = dim
+    return summary
+
+
+def wiz_query(args):
+    allowlist = home_allowlist(args.home_export)
+    if args.wifi_profile.stat().st_size > 4096:
+        raise ValueError('Wi-Fi profile exceeds bound')
+    profile = strict_json(args.wifi_profile.read_bytes(), 4096)
+    if set(profile) - {'ssid', 'password'} or not isinstance(profile.get('ssid'), str) or not isinstance(profile.get('password', ''), str):
+        raise ValueError('Wi-Fi profile must contain only SSID and optional password')
+    expected = mac_bytes(args.expected_mac)
+    hub = Hub(args.port)
+    try:
+        identity = hub.rpc(HELLO)
+        if mac_bytes(identity.get('mac')) != expected:
+            raise ValueError('Attached hub MAC differs from --expected-mac')
+        if identity.get('protocol') != 1 or identity.get('firmware') != '1.1.0':
+            raise ValueError('Read diagnostics require hub firmware 1.1.0')
+        state = hub.connect_wifi(profile)
+        del profile
+        report = hub.wiz_query(allowlist, state)
+        report.update({'v': 1, 'observed_unix': time.time(), 'hub_firmware': '1.1.0',
+                       'trust': 'unauthenticated_local_udp', 'read_only': True})
+        private_diagnostic(args.output, report)
+        # Deliberately omit full MACs, IPs, home IDs, names and raw user config.
+        found = {entry['index'] for entry in report['records'] if entry['method'] == 'getSystemConfig'}
+        print(f"WiZ read diagnostics: {len(found)} of {len(allowlist)} exported lights replied.")
+        def identifier(value):
+            return value if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,48}', value) else 'unreported'
+        for index in sorted(found):
+            replies = {e['method']: e['response'].get('result', {}) for e in report['records'] if e['index'] == index}
+            system, model = replies.get('getSystemConfig', {}), replies.get('getModelConfig', {})
+            summary = {'light': index+1, 'module': identifier(system.get('moduleName')),
+                       'firmware': identifier(system.get('fwVersion'))}
+            summary.update(model_summary(model))
+            print(json.dumps(summary, separators=(',', ':')))
+        print('Private diagnostic saved; replies are not cryptographic bulb authentication.')
+        if report['summary'].get('ok') is not True:
+            raise HubCommandError('Diagnostic ended early; private report saved')
+    finally:
+        hub.close()
+
+
 def flash(args):
     import entrance
     directory = ROOT / '.local/hub/build'
@@ -405,6 +637,13 @@ def main():
     p.add_argument('--port', required=True)
     p.add_argument('--expected-mac', required=True)
     p.add_argument('--ssid', default='203 IoTitty', help='Empty string scans all nearby networks')
+    p = sub.add_parser('wiz-query', help='Read-only WiZ discovery/status through the spare radio')
+    p.set_defaults(handler=wiz_query)
+    p.add_argument('--port', required=True)
+    p.add_argument('--expected-mac', required=True)
+    p.add_argument('--wifi-profile', required=True, type=Path)
+    p.add_argument('--home-export', required=True, type=Path)
+    p.add_argument('--output', required=True, type=Path)
     p = sub.add_parser('flash')
     p.set_defaults(handler=flash)
     p.add_argument('--port', required=True)

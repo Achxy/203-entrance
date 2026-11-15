@@ -1,5 +1,6 @@
 import {DurableObject} from 'cloudflare:workers';
 import {flat,request,hex,validHex,integer,authenticationMessage,connectionMessage,verifyDevice,MAX_REPLY} from './protocol.mjs';
+import {LightsLane,lightInfo} from './lights-lane.mjs';
 const now = () => Date.now();
 const send = (ws,m) => { try { ws.send(JSON.stringify(m)); return true; } catch { return false; } };
 const close = (ws,reason) => { try { ws.close(1008,reason); } catch {} };
@@ -8,12 +9,15 @@ function failure(ws,id,code,message,status=503) {send(ws,{v:1,type:'reply',id,st
 export default {
   async fetch(req,env) {
     const url=new URL(req.url);
-    if (url.pathname !== '/v1/device' && url.pathname !== '/v1/player' && url.pathname !== '/v1/status') return new Response('Not found',{status:404});
+    const lighting=url.pathname==='/v1/lights'||url.pathname==='/v1/lights/info';
+    if (url.pathname==='/v1/lights'&&env.LIGHTS_ENABLED!=='true')return new Response('Not found',{status:404});
+    if (!lighting&&url.pathname !== '/v1/device' && url.pathname !== '/v1/player' && url.pathname !== '/v1/status') return new Response('Not found',{status:404});
     const origin=req.headers.get('Origin');
-    const allowed=env.ALLOWED_ORIGINS.split(',');
-    if(url.pathname!=='/v1/device' && !allowed.includes(origin)) return new Response('Origin denied',{status:403});
+    const allowed=(env.ALLOWED_ORIGINS||'').split(',').map(value=>value.trim()).filter(Boolean);
+    if(url.pathname!=='/v1/device' && !(lighting&&origin===null) && !allowed.includes(origin)) return new Response('Origin denied',{status:403});
     if(url.search || req.method!=='GET') return new Response('Invalid request',{status:400});
-    if(url.pathname!=='/v1/status' && req.headers.get('Upgrade')?.toLowerCase()!=='websocket') return new Response('WebSocket required',{status:426});
+    if(url.pathname!=='/v1/status' && url.pathname!=='/v1/lights/info' && req.headers.get('Upgrade')?.toLowerCase()!=='websocket') return new Response('WebSocket required',{status:426});
+    if(url.pathname==='/v1/lights/info'&&env.LIGHTS_ENABLED!=='true')return lightInfo(req,env,false);
     if(url.pathname==='/v1/device'){
       // Reject unsolicited device sockets before they consume either pending
       // authentication slot. The fresh server challenge still completes auth.
@@ -31,7 +35,7 @@ export default {
   }
 };
 export class ArcadeRoom extends DurableObject {
-  constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env;this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS relay_limits (k TEXT PRIMARY KEY, start INTEGER NOT NULL, n INTEGER NOT NULL)");}
+  constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env;this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS relay_limits (k TEXT PRIMARY KEY, start INTEGER NOT NULL, n INTEGER NOT NULL)");this.lights=new LightsLane(this);}
   sockets(){return this.ctx.getWebSockets().filter(ws=>ws.readyState===1);}
   device(){return this.sockets().find(ws=>attachment(ws)?.kind==='device');}
   players(){return this.sockets().filter(ws=>attachment(ws)?.kind==='phone');}
@@ -41,6 +45,7 @@ export class ArcadeRoom extends DurableObject {
       const a=attachment(ws);
       if(!a || (a.kind==='pending' && t-a.created>10000) || (a.kind==='phone' && (t>a.until||t-a.last>12000)) || (a.kind==='device' && t-a.last>15000)) close(ws,'Session expired');
     }
+    this.lights.prune();
   }
   rate(key,limit,ms){
     // Low-frequency admission limits survive hibernation; input limits live in attachments.
@@ -55,12 +60,16 @@ export class ArcadeRoom extends DurableObject {
     });
   }
   async fetch(req){
-    this.prune();const path=new URL(req.url).pathname;
+    const path=new URL(req.url).pathname;
+    if(path==='/v1/lights/info')return this.lights.info(req);
+    this.prune();
+    if(path==='/v1/lights'&&!this.lights.enabled())return new Response('Not found',{status:404});
     const device=this.device(), da=device&&attachment(device);
     if(path==='/v1/status') return Response.json({online:!!da&&now()-da.last<10000,protocol:1},{headers:{'Cache-Control':'no-store','Access-Control-Allow-Origin':req.headers.get('Origin'),'Vary':'Origin'}});
     const ip=req.headers.get('X-Relay-Peer');
     const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(ip));
     const peer=new DataView(digest).getUint32(0)||1;
+    if(path==='/v1/lights')return this.lights.connect(peer);
     // The display and phones can share one campus NAT. Phone reconnects must not
     // consume the display's separate recovery budget.
     if(!this.rate((path==='/v1/device'?'device:':'connect:')+peer,12,60000)) return new Response('Please retry later',{status:429});
@@ -78,11 +87,20 @@ export class ArcadeRoom extends DurableObject {
     if(a.kind==='pending')send(ws,{v:1,type:'challenge',nonce:a.nonce,connection:a.id});
     else send(ws,{v:1,type:'online',online:true,boot:da.boot,lease:da.lease||0});
     // An alarm runs only to expire abandoned sockets, never per input.
-    if(await this.ctx.storage.getAlarm()===null)await this.ctx.storage.setAlarm(now()+15000);
+    if(this.lights.enabled())await this.lights.schedule(now()+15000);
+    else if(await this.ctx.storage.getAlarm()===null)await this.ctx.storage.setAlarm(now()+15000);
     return new Response(null,{status:101,webSocket:client});
   }
   async webSocketMessage(ws,text){
     const a=attachment(ws);if(!a)return close(ws,'Unknown connection');
+    if(a.kind==='light'){
+      try{return await this.lights.message(ws,text);}catch{return this.lights.end(ws,'Invalid lighting message');}
+    }
+    if(a.kind==='device'&&typeof text==='string'&&/"type"\s*:\s*"light_reply"/.test(text)){
+      // Lighting acknowledgements have their own pending-credit validation;
+      // they must not consume the arcade/device input-rate budget.
+      return this.lights.reply(a,text);
+    }
     const t=now();
     if(t-a.rateAt>10000){a.rateAt=t;a.count=0;}
     if(++a.count>(a.kind==='phone'?260:600))return close(ws,'Rate limited');
@@ -93,7 +111,7 @@ export class ArcadeRoom extends DurableObject {
         if(m.v!==1||m.type!=='authenticate'||t-a.created>10000||m.device!==this.env.DEVICE_ID||!validHex(m.boot,16))throw Error('Authentication invalid');
         a.kind='verifying';ws.serializeAttachment(a);
         if(!await verifyDevice(this.env.DEVICE_PUBLIC_KEY,authenticationMessage(m.device,a.nonce,a.id,m.boot),m.signature))throw Error('Authentication failed');
-        const old=this.device();if(old){const retired=attachment(old);retired.kind='retired';old.serializeAttachment(retired);this.disconnectPlayers();close(old,'Replaced by authenticated display');}
+        const old=this.device();if(old){const retired=attachment(old);retired.kind='retired';old.serializeAttachment(retired);this.disconnectPlayers();this.lights.disconnect('gateway_replaced');close(old,'Replaced by authenticated display');}
         a.kind='device';a.boot=m.boot;a.lease=0;delete a.nonce;ws.serializeAttachment(a);
         send(ws,{v:1,type:'authenticated'});return;
       }
@@ -134,6 +152,10 @@ export class ArcadeRoom extends DurableObject {
     if(m.type==='pulse'){
       if(!integer(m.lease,0,Number.MAX_SAFE_INTEGER)||m.lease<a.lease)throw Error('Invalid clock');
       a.lease=m.lease;
+      if(Object.hasOwn(m,'light_protocol')){
+        a.lightProtocol=m.light_protocol===1?1:0;
+        if(a.lightProtocol!==1)this.lights.disconnect('unavailable');
+      }
       if(typeof m.state==='string'&&m.state.length<=1200){
         const view=JSON.parse(m.state);
         if(view.slot!==-1||view.boot!==a.boot||Object.hasOwn(view,'token')||Object.hasOwn(view,'receipt'))throw Error('Invalid public state');
@@ -162,7 +184,7 @@ export class ArcadeRoom extends DurableObject {
     phone.serializeAttachment(p);send(phone,{v:1,type:'reply',id:m.id,status:m.status,body:m.body});
   }
   disconnectPlayers(){for(const ws of this.players()){send(ws,{v:1,type:'online',online:false});close(ws,'Display disconnected');}}
-  webSocketClose(ws){const a=attachment(ws);if(a?.kind==='device')this.disconnectPlayers();try{ws.close(1000,'Closed');}catch{}}
+  webSocketClose(ws){const a=attachment(ws);if(a?.kind==='device'){this.disconnectPlayers();this.lights.disconnect();}else if(a?.kind==='light')this.lights.cleanup(ws);try{ws.close(1000,'Closed');}catch{}}
   webSocketError(ws){this.webSocketClose(ws);}
-  async alarm(){this.prune();if(this.sockets().length)await this.ctx.storage.setAlarm(now()+15000);}
+  async alarm(){this.prune();if(this.sockets().length)await this.ctx.storage.setAlarm(this.lights.nextDeadline());}
 }

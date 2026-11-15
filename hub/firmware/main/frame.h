@@ -4,7 +4,7 @@
 #include <string.h>
 #define HUB_MAX 2048
 #define HUB_HEADER 16
-enum { HELLO=1, JOIN=2, OPEN=3, DATA=4, ACK=5, CLOSE=6, SCAN=7 };
+enum { HELLO=1, JOIN=2, OPEN=3, DATA=4, ACK=5, CLOSE=6, SCAN=7, WIZ_QUERY=8 };
 static inline uint32_t hub_u32(const uint8_t *p)
 { return (uint32_t)p[0] | (uint32_t)p[1]<<8 | (uint32_t)p[2]<<16 | (uint32_t)p[3]<<24; }
 static inline void hub_put32(uint8_t *p, uint32_t v)

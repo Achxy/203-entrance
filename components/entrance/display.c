@@ -3,6 +3,7 @@
 #include "builtin_loop.h"
 #include "captions.h"
 #include "display_config.h"
+#include "display_workspace.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_heap_caps.h"
@@ -20,6 +21,15 @@ static display_config_t config = {.magic = DISPLAY_CONFIG_MAGIC, .rotation = 1, 
 static nvs_handle_t storage;
 static SemaphoreHandle_t mutex;
 static spi_device_handle_t spi;
+#if ENTRANCE_LIGHTS
+/* One packed image serves the animation, custom clip or game being drawn.
+ * Encoded custom media is retained only in play/pause mode. */
+static builtin_loop_t movie_storage;
+static uint8_t *media;
+static bool game_pixels;
+#define movie movie_storage
+#define pixels movie_storage.pixels
+#else
 static union {
     struct {
         uint8_t media[MEDIA_MAX_BYTES], pixels[MEDIA_MAX_PIXELS / 2];
@@ -31,6 +41,7 @@ static union {
 #define media buffers.clip.media
 #define pixels buffers.clip.pixels
 #define movie buffers.builtin.player
+#endif
 static bool replay_loaded;
 extern const uint8_t replay_asset_start[] asm("_binary_neko_ecl_start");
 extern const uint8_t replay_asset_end[] asm("_binary_neko_ecl_end");
@@ -54,6 +65,25 @@ static bool replay_mode(unsigned mode)
 {
     return mode == MODE_REPLAY || mode == MODE_REPLAY_PAUSE;
 }
+#if ENTRANCE_LIGHTS
+static bool clip_mode(unsigned mode)
+{
+    return mode == MODE_PLAY || mode == MODE_PAUSE;
+}
+static bool restore_after_game(void)
+{
+    if (!game_pixels)
+        return true;
+    bool okay = true;
+    if (replay_loaded)
+        okay = builtin_loop_seek(&movie, movie.frame);
+    else if (clip_mode(config.mode) && media_size)
+        okay = display_workspace_seek_clip(media, media_size, &info, frame, pixels, &frame_offset);
+    if (okay)
+        game_pixels = false;
+    return okay;
+}
+#endif
 static const uint8_t *animation_asset(unsigned slot, size_t *size)
 {
     const uint8_t *start = slot == 2 ? study_asset_start : replay_asset_start;
@@ -70,6 +100,9 @@ static bool open_replay(unsigned slot)
     size_t size;
     const uint8_t *asset = animation_asset(slot, &size);
     replay_loaded = builtin_loop_open(&movie, asset, size);
+#if ENTRANCE_LIGHTS
+    game_pixels = false;
+#endif
     caption_started_us = esp_timer_get_time();
     return replay_loaded;
 }
@@ -174,7 +207,15 @@ static esp_err_t draw(void)
             return err;
         panel_dirty = false;
     }
+#if ENTRANCE_LIGHTS
+    bool game_frame = arcade_frame_begin(pixels, sizeof(pixels));
+    if (game_frame)
+        game_pixels = true;
+    else if (!restore_after_game())
+        return ESP_ERR_INVALID_CRC;
+#else
     bool game_frame = arcade_frame_begin();
+#endif
     bool builtin = replay_mode(config.mode) && replay_loaded;
     unsigned dw = w, dh = h;
     bool clip = media_size && (config.mode == MODE_PLAY || config.mode == MODE_PAUSE);
@@ -234,7 +275,13 @@ static void reset_frame(void)
     frame = 0;
     frame_offset = MEDIA_HEADER_BYTES;
     memset(pixels, 0, sizeof(pixels));
-    if (media_size &&
+#if ENTRANCE_LIGHTS
+    game_pixels = false;
+    bool have_clip = media_size && media;
+#else
+    bool have_clip = media_size;
+#endif
+    if (have_clip &&
         !media_frame(media, media_size, info.width * info.height, &frame_offset, pixels)) {
         media_size = 0;
         strlcpy(last_error, "Stored clip could not be decoded. Upload it again.",
@@ -256,6 +303,12 @@ static void display_task(void *arg)
             int64_t now = esp_timer_get_time();
             bool builtin = replay_mode(config.mode) && replay_loaded;
             bool game_active = arcade_display_active();
+#if ENTRANCE_LIGHTS
+            /* Restore before applying the next delta, including when the game
+             * ends between the state check and draw()'s final frame snapshot. */
+            if (!game_active && !restore_after_game())
+                driver_ready = false;
+#endif
             if (game_active != was_game) dirty = true;
             was_game = game_active;
             bool playing = game_active || (builtin ? config.mode == MODE_REPLAY
@@ -345,6 +398,32 @@ esp_err_t display_start(void)
             config.mode = MODE_REPLAY;
             config.rotation = 1;
         }
+#if ENTRANCE_LIGHTS
+        n = 0;
+        err = nvs_get_blob(storage, "clip", NULL, &n);
+        stored_clip = err != ESP_ERR_NVS_NOT_FOUND;
+        uint8_t *saved_media = NULL;
+        if (err == ESP_OK && n >= MEDIA_HEADER_BYTES && n <= MEDIA_MAX_BYTES) {
+            saved_media = malloc(n);
+            err = saved_media ? nvs_get_blob(storage, "clip", saved_media, &n) : ESP_ERR_NO_MEM;
+        } else if (err == ESP_OK) {
+            err = ESP_ERR_INVALID_SIZE;
+        }
+        if (err == ESP_OK && media_validate(saved_media, n, &info)) {
+            media_size = n;
+            uint8_t hash[32];
+            sha256_bytes(saved_media, n, hash);
+            hex_encode(hash, 32, media_sha);
+            if (clip_mode(config.mode)) {
+                media = saved_media;
+                saved_media = NULL;
+            }
+        } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+            strlcpy(last_error, "Stored clip unreadable; replace or remove it explicitly.",
+                    sizeof(last_error));
+        }
+        free(saved_media);
+#else
         n = sizeof(media);
         err = nvs_get_blob(storage, "clip", media, &n);
         stored_clip = err != ESP_ERR_NVS_NOT_FOUND;
@@ -359,6 +438,7 @@ esp_err_t display_start(void)
             strlcpy(last_error, "Stored clip unreadable; replace or remove it explicitly.",
                     sizeof(last_error));
         }
+#endif
     } else {
         strlcpy(last_error, "Media storage unavailable. USB recovery is required.",
                 sizeof(last_error));
@@ -369,12 +449,14 @@ esp_err_t display_start(void)
     }
     if (!replay_mode(config.mode)) {
         replay_loaded = false;
+#if !ENTRANCE_LIGHTS
         if (media_size) {
             size_t length = sizeof(media);
             if (nvs_get_blob(storage, "clip", media, &length) != ESP_OK || length != media_size ||
                 !media_validate(media, length, &info))
                 return ESP_ERR_INVALID_CRC;
         }
+#endif
         reset_frame();
     }
     gpio_config_t pins = {.pin_bit_mask = (1ULL << 0) | (1ULL << 1), .mode = GPIO_MODE_OUTPUT};
@@ -444,12 +526,27 @@ esp_err_t display_install(const uint8_t *data, size_t size)
     /* Lost acknowledgements can retry the same clip without extra flash wear. */
     if (size == media_size && !strcmp(candidate_sha, media_sha))
         return end_change(ESP_OK);
+#if ENTRANCE_LIGHTS
+    uint8_t *next_media = NULL;
+    if (clip_mode(config.mode)) {
+        next_media = malloc(size);
+        if (!next_media)
+            return end_change(ESP_ERR_NO_MEM);
+        memcpy(next_media, data, size);
+    }
+#endif
     esp_err_t err = nvs_set_blob(storage, "clip", data, size);
     if (err == ESP_OK)
         err = nvs_commit(storage);
     if (err == ESP_OK) {
+#if ENTRANCE_LIGHTS
+        free(media);
+        media = next_media;
+        next_media = NULL;
+#else
         if (!replay_loaded)
             memcpy(media, data, size);
+#endif
         stored_clip = true;
         media_size = size;
         info = candidate;
@@ -458,6 +555,9 @@ esp_err_t display_install(const uint8_t *data, size_t size)
             reset_frame();
         diag_event("Display clip saved and verified");
     }
+#if ENTRANCE_LIGHTS
+    free(next_media);
+#endif
     return end_change(err);
 }
 esp_err_t display_remove(void)
@@ -470,6 +570,10 @@ esp_err_t display_remove(void)
     if (err == ESP_OK)
         err = nvs_commit(storage);
     if (err == ESP_OK) {
+#if ENTRANCE_LIGHTS
+        free(media);
+        media = NULL;
+#endif
         media_size = 0;
         stored_clip = false;
         memset(&info, 0, sizeof(info));
@@ -532,7 +636,11 @@ esp_err_t display_configure(const cJSON *request)
     if (chapter < 0 && !memcmp(&next, &config, sizeof(config)))
         return end_change(ESP_OK);
     uint8_t *saved_clip = NULL;
+#if ENTRANCE_LIGHTS
+    if (clip_mode(next.mode) && !media && media_size) {
+#else
     if (!replay_mode(next.mode) && replay_loaded && media_size) {
+#endif
         saved_clip = malloc(media_size);
         size_t length = media_size;
         media_info_t checked;
@@ -554,6 +662,14 @@ esp_err_t display_configure(const cJSON *request)
         panel_dirty |= next.profile != config.profile || next.rotation != config.rotation ||
                        next.inverted != config.inverted;
         bool use_replay = replay_mode(next.mode);
+#if ENTRANCE_LIGHTS
+        bool had_replay = replay_loaded;
+        bool loaded_clip = saved_clip != NULL;
+        if (saved_clip) {
+            media = saved_clip;
+            saved_clip = NULL;
+        }
+#endif
         if (use_replay && (!replay_loaded || next.animation_slot != config.animation_slot) && !open_replay(next.animation_slot)) {
             driver_ready = false;
             free(saved_clip);
@@ -561,10 +677,25 @@ esp_err_t display_configure(const cJSON *request)
         }
         if (!use_replay && replay_loaded) {
             replay_loaded = false;
+#if !ENTRANCE_LIGHTS
             if (saved_clip)
                 memcpy(media, saved_clip, media_size);
+#endif
             reset_frame();
         }
+#if ENTRANCE_LIGHTS
+        if (!use_replay && !had_replay && loaded_clip) {
+            if (!display_workspace_seek_clip(media, media_size, &info, frame, pixels, &frame_offset)) {
+                driver_ready = false;
+                return end_change(ESP_ERR_INVALID_CRC);
+            }
+            game_pixels = false;
+        }
+        if (!clip_mode(next.mode)) {
+            free(media);
+            media = NULL;
+        }
+#endif
         if (chapter >= 0 && !builtin_loop_seek(&movie, 0)) {
             driver_ready = false;
             free(saved_clip);
@@ -585,7 +716,11 @@ uint8_t *display_copy(size_t *size)
     uint8_t *result = media_size ? malloc(media_size) : NULL;
     if (result) {
         size_t length = media_size;
+#if ENTRANCE_LIGHTS
+        if (!media) {
+#else
         if (replay_loaded) {
+#endif
             if (nvs_get_blob(storage, "clip", result, &length) != ESP_OK || length != media_size) {
                 free(result);
                 result = NULL;
