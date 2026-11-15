@@ -27,8 +27,34 @@ combinations while retaining the old record for rollback. Desktop/mobile browser
 checks pass at 1440, 390 and 320 pixels, including slot selection/restoration,
 caption timing, themes, keyboard use, local assets and failure handling.
 
-These are software and artwork checks. Candidate installation, physical panel
-appearance and the longer qualification gates must be recorded separately.
+Signed RC15 was subsequently installed through **direct GitHub download on the
+display's campus uplink**, after on-device manifest verification. It rebooted,
+received repeated scoped updater contact and confirmed healthy at 33.6 seconds
+of uptime. The signed image is 1,314,816 bytes, leaving 651,264 bytes in the
+unchanged application slot. All four tagged Linux CI jobs passed.
+
+Live authenticated checks verified both embedded assets byte-for-byte and
+exercised slot 1 → 2 → 1 → 2. The old panel settings and settings generation
+were retained; the prior firmware remained a valid rollback target. All three
+captions advanced during playback and while the paw was deliberately paused;
+the paused paw retained one frame. Playback was resumed afterward.
+
+Two earlier local uploads timed out on the weak spare-hub radio path and
+retained RC14. They are failed transfers, not successful OTA cycles. One
+post-install status read also lost its management connection; the completed
+slot/caption checks remain recorded, and a separate health observation follows.
+The laptop's Wi-Fi and routing were not changed.
+
+The owner then confirmed the physical result: the paw is slightly to the right
+and moving, with the three study captions switching below the yellow line.
+Eleven subsequent healthy status snapshots span 133.898 seconds and 43 loop
+boundaries, with advancing uptime and settings generation 8 unchanged. Free
+heap ranged from 45,236 to 64,220 bytes; minimum-ever heap was 28,588 bytes.
+Five management read errors interrupted that bounded sampling script, so its
+continuous-read target is **not** recorded as passed. The public relay reported
+the device online independently. This is not a 60-minute stability qualification.
+
+The longer qualification gates remain open.
 See [saved animation details and recovery](animation-slots.md).
 
 ## Hardware and preservation

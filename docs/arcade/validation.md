@@ -167,7 +167,7 @@ Android/iPhone game-controller testing is outstanding.
 | Real disconnect/reconnect and hostile-client tests | Protocol tests pass; hardware cases remain |
 | Google-verified physical visit and receipt sync | Web sign-in/pass and existing guest log verified; end-to-end admission remains |
 | Twenty alternating updates on final combined firmware | Not completed; original-board foundation results remain separately scoped |
-| GitHub download on the final combined firmware | Not completed |
+| GitHub download on the combined firmware | Passed for RC15 on the campus uplink, including signed manifest/image verification and healthy trial confirmation; see the animation checkpoint |
 | Sixty continuous minutes on the final configuration | Not completed |
 | Physical power interruption on this board | Unavailable; prior board's evidence is not relabelled |
 | Stable release and final recovery bundle | Pending final qualification |
