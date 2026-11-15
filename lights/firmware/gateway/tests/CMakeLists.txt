@@ -8,7 +8,7 @@ add_executable(gateway_checks test_gateway.c ../gateway_record.c ../gateway_stor
     ../gateway_service.c ../../core/lighting_authority.c)
 target_include_directories(gateway_checks PRIVATE .. ../../core)
 target_compile_options(gateway_checks PRIVATE -Wall -Wextra -Wconversion -Werror -UNDEBUG)
-target_link_libraries(gateway_checks PRIVATE wiz_host)
+target_link_libraries(gateway_checks PRIVATE wiz_host m)
 if(WIZ_SANITIZERS)
     target_compile_options(gateway_checks PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
     target_link_options(gateway_checks PRIVATE -fsanitize=address,undefined)

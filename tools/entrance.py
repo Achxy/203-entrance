@@ -806,10 +806,14 @@ def cmd_soak(args):
             while True:
                 if observe(http_sample(device.request("GET", "/api/v1/status"))):
                     break
-                time.sleep(15)
                 if time.monotonic() - renewed >= 2400:
+                    # Password verification is intentionally expensive on the MCU.
+                    # Sample immediately around renewal instead of adding the
+                    # normal 15-second sleep to its telemetry gap.
                     device.login()
                     renewed = time.monotonic()
+                    continue
+                time.sleep(15)
         report = save(complete=True)
         if not report["passed"]:
             raise ValueError("; ".join(report["errors"]))
