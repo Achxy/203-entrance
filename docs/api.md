@@ -85,6 +85,19 @@ An OTA installation is successful only when `/ota/status` reports `phase: "confi
 
 After a lost chunk reply, query the ticket's `/ota/status`. While `phase` is `receiving`, `received` equal to the chunk end acknowledges that write; `received` equal to its starting offset permits retry. Reject any other offset or phase. The supplied clients bound write attempts and status recovery to three attempts each. Restart from `/ota/start` after an aborted or timed-out transaction. Never blindly replay an uncertain mutation.
 
+The firmware expires a receiving transfer after 30 seconds without a successful
+write, or 300 seconds total. Reading status does not refresh these timers. The
+current clients use 8-second chunk requests, 3-second reconciliation reads,
+and a conservative 25-second recovery budget anchored before the previous
+acknowledged PUT. A retry needs enough remaining time for both its write and a
+status read. A separate 295-second budget begins before `/ota/start`; progress
+does not renew it. Late acknowledgements cannot authorize further writes.
+The CLI's timeout applies to socket operations, so its scheduling checks cannot
+interrupt an HTTP operation already in progress. Browser timer throttling can
+also delay cancellation. The firmware's own expiry and offset checks remain
+authoritative. These changes take effect in the CLI immediately and in the
+embedded browser console only after installing firmware that includes them.
+
 During trial boot, send `/ota/confirm` every two seconds until the expected image reports `confirmed`. The most recent request must be within ten seconds of completion of the continuous 30-second health window; a single early request is insufficient. The 120-second deadline still applies.
 
 An explicit release check may supply `{ "version": "0.1.0-rc.74" }` to verify that version's public assets, including a GitHub qualification release. The authenticated request is still constrained to the configured repository and signed manifest; arbitrary URLs are never accepted. Automatic checks always return to the latest stable release. Images retain the strictly-newer version policy.

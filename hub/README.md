@@ -75,6 +75,13 @@ timeouts close the affected stream. TLS and the OTA engine still enforce their
 own integrity/offset rules. A new client opens a fresh stream after a display
 reboot; the existing OTA CLI reconnects and confirms the trial automatically.
 
+Each local connection also owns its own acknowledgement event and client
+identity. Reader callbacks and cleanup retain that ownership: a delayed CLOSE,
+DATA failure or ACK from an old stream cannot detach or acknowledge a replacement
+stream. Deterministic thread tests exercise these races without physical USB.
+This host-side fix does not repair radio disassociation or establish OTA
+reliability on a weak Wi-Fi link.
+
 The hub retries Wi-Fi association without changing the laptop's connection.
 Three consecutive failed TCP opens also trigger a fresh association of only
 the hub's radio, at most once per minute. This recovers stale associations

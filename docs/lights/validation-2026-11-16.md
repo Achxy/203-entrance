@@ -297,9 +297,10 @@ The owner's additional USB adapter enumerated as TP-Link/Realtek `2357:0120`
 without a usable network interface. Static inspection of the supplied
 `Archer T2U Plus _V1_190111_Mac.zip` found only Intel kernel-driver executables
 in a package labelled macOS 10.9–10.14; this Mac runs macOS 26.5.2 on arm64.
-The separately inspected experimental driver has no ready route-free TCP bridge
-and lists Tahoe as untested. No driver was installed or executed and no Mac
-network/security setting was changed.
+At that initial inspection, the experimental driver had no ready route-free TCP
+bridge and listed Tahoe as untested. No vendor Mac driver was installed or
+executed, and no Mac network/security setting was changed. The later bounded
+prototype and Linux diagnostics are recorded below.
 
 ## Remaining acceptance work
 
@@ -334,3 +335,100 @@ the adapter's radio has not completed startup. No RC17 installation or lighting
 qualification is claimed from that work. A fresh pinned status read through the
 existing spare hub still found healthy RC16, settings intact and animation slot
 2 active. The Mac's built-in Wi-Fi and default Internet route were preserved.
+
+### Physical reconnect and independent Linux diagnostic
+
+The owner power-cycled the external adapter and later moved it to another USB
+port. A fresh Swift power-on reproduced the failure. The signed, verified Alpine
+3.23.8 / Linux 6.18.60 `rtw88_8821au` driver then reproduced the same MAC-on
+timeout in a bounded, diskless QEMU guest. The final run used Linux first after
+the owner's move and started with a clear MAC-on request bit. No wireless
+interface appeared. The default host route and interface inventory were
+unchanged; no guest NIC, host bridge, shared folder or Wi-Fi association was
+used. The detailed report preserves the capped USB trace, successful register
+exchanges, separate libusb warnings and the common-host/hub limitation. This
+does not prove defective hardware or insufficient power.
+
+After the spare hub was reconnected, three pinned authenticated status reads
+returned RC16 with healthy settings and OTA state. Over 20,901 ms, rendered
+frames advanced from 66,739 to 66,999 and replay loops from 1,762 to 1,769.
+The public display relay separately returned `online:true`. These are fresh
+point observations, not a completed soak. Evidence is
+`.local/usb-wifi-driver/production-after-linux-diagnostic.json`.
+
+### Third RC17 transfer, smaller chunks
+
+That recovered path was used for one bounded attempt with 4,096-byte chunks,
+below the firmware's 8,192-byte maximum, while retaining the existing signature,
+certificate-pin, transaction-ticket, offset and healthy-trial checks. Fourteen
+chunks totaling **57,344 bytes** were acknowledged in 7.746 seconds before a
+connection failed. Ticket-scoped recovery reads also timed out. The upload never
+reached the finish/verification/activation operation. No production build or
+resource threshold was changed.
+
+A later certificate-pinned ticket read resolved the final state: `phase:failed`,
+`busy:false`, `trial:false`, `healthy:true`, running **0.3.0-rc.16**, with the
+same 57,344-byte received count. The inactivity timeout closed the transfer.
+The hub subsequently reported a Wi-Fi disassociation with reason 4 and about
+−85 dBm; subsequent full-status handshakes failed. The earlier full-status read
+and the later OTA-only read are recorded separately. No new claim about
+post-failure animation counters or lighting activation follows from the latter.
+
+Evidence is `.local/lights/rc17-attempt-3-20261116T122334Z/`,
+`.local/lights/rc17-install-attempt-3.log`, and the separate failed final-status
+records `.local/lights/rc17-after-attempt-3*.json`. RC16 remains the active signed
+firmware, RC17 remains uninstalled, and the already-invalid inactive slot still
+does not provide an older rollback target. No WiZ credentials or bulb writes
+were sent. Repeating uploads on an unqualified link is not an acceptance test.
+
+A further native UI attachment attempt again timed out. The disconnected app
+it launched was identified by its exact executable path and closed. This adds
+no interactive UI validation result; no driver or VM was left running.
+
+### Recovery defects found and repaired on the host
+
+Review found a real stream-lifetime race in the USB hub's Python proxy. A reader
+could retain an old client snapshot, then detach or acknowledge a replacement
+connection after the original forwarder had completed. Each stream now owns its
+client object, request ID and private acknowledgement event. Cleanup checks that
+exact ownership, including when a request ID repeats. Four deterministic
+regressions first failed against the original implementation; all six lifetime
+regressions and all 17 hub tests pass with the fix. This does not prove that the
+race caused the observed RF disassociation or interrupted hardware uploads.
+
+The CLI and embedded browser source also allowed a 20-second PUT followed by
+three 5-second status reads and backoff: the nominal unresolved-ACK path consumed
+36 seconds despite the firmware's 30-second inactivity limit. Both clients now
+use 8-second PUTs, 3-second reconciliation reads, a conservative 25-second
+recovery budget and a separate 295-second upload budget. Progress is anchored to
+the accepted PUT's local start, including an acknowledgement recovered by GET.
+Status reads and retries cannot renew the budget. Unknown offsets, late replies
+and terminal authentication/certificate errors cannot authorize another write.
+The [API documentation](../api.md) distinguishes these scheduling checks from
+hard interruption of in-flight network calls. No firmware timeout was relaxed.
+
+Final validation passed **133 repository tests**, including **23 CLI client
+tests** and the **17 hub tests**; **13 actual-JavaScript upload scenarios** passed
+with a simulated monotonic clock and network-free responses. The full headless
+browser suite passed at 1440, 390 and 320 pixels, covering lost acknowledgements,
+trial reconnection, rejected updates, keyboard access, local assets and both
+themes. The pinned Playwright package's expected browser cache was absent, so
+the successful run explicitly used installed Chrome in an isolated headless
+profile and Node 24. No normal browser profile was accessed.
+
+These source changes do not rewrite the frozen RC17 artifact or the installed
+RC16 application. The host proxy/CLI changes can be used now; the embedded
+browser changes require a subsequent firmware build and installation. Logs are
+`.local/lights/post-radio-recovery-regression-final.log`,
+`.local/lights/hub-generation-regressions.log`, and
+`.local/lights/browser-recovery-final.log`. The repaired proxy was restarted only
+on the spare, with its existing profile and loopback endpoint. No further OTA
+attempt follows from these host test results.
+
+Two final certificate-pinned reads through the repaired proxy verified RC16,
+healthy settings, no update/trial in progress, and slot 2 rendering. Frames
+advanced from 102,202 to 102,333 and loops from 2,700 to 2,703 over 10,378 ms.
+Lighting remained explicitly unconfigured and inactive; `rollback_available`
+remained false. Evidence is `.local/lights/post-host-recovery-fix-status.json`.
+The active display is safe to leave on this version, but the lighting workload
+and combined 60-minute acceptance test remain unqualified.

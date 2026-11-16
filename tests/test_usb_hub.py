@@ -18,6 +18,188 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import usb_wifi_hub as hub
 
 
+class HubConnectionLifetimeTests(unittest.TestCase):
+    class ClientDouble:
+        def __init__(self):
+            self.closed = False
+            self.received = []
+            self.before_shutdown = None
+
+        def sendall(self, payload):
+            if self.closed:
+                raise OSError('Old local stream is closed')
+            self.received.append(payload)
+
+        def settimeout(self, _timeout):
+            pass
+
+        def shutdown(self, _how):
+            if self.before_shutdown:
+                self.before_shutdown()
+
+        def close(self):
+            self.closed = True
+
+    def make_hub(self):
+        # Do not open serial ports or sockets: exercise the actual reader and
+        # detach implementation using an in-memory frame source.
+        device = hub.Hub.__new__(hub.Hub)
+        device.lock = threading.Lock()
+        device.pending, device.streams = {}, {}
+        device.client = self.ClientDouble()
+        device.connection = 101
+        device.ack, device.closed = threading.Event(), threading.Event()
+        device.failure = None
+        device.sent = []
+        device.send = lambda kind, request, payload=b'': device.sent.append((kind, request, payload))
+        return device
+
+    def assert_stale_reader_preserves_replacement(self, kind):
+        device = self.make_hub()
+        old_client, old_ack = device.client, device.ack
+        snapshot_ready, resume, processed = (threading.Event() for _ in range(3))
+        reader = None
+
+        class SnapshotLock:
+            def __init__(self):
+                self.lock = threading.Lock()
+                self.pause_once = True
+
+            def __enter__(self):
+                self.lock.acquire()
+
+            def __exit__(self, *_exc):
+                self.lock.release()
+                if threading.current_thread() is reader and self.pause_once:
+                    self.pause_once = False
+                    snapshot_ready.set()
+                    if not resume.wait(2):
+                        raise TimeoutError('Test did not release reader snapshot')
+
+        class SerialDouble:
+            def __init__(self):
+                self.first = True
+
+            def read(self, _length):
+                if self.first:
+                    self.first = False
+                    return hub.encode(kind, 101, b'old response' if kind == hub.DATA else b'')
+                processed.set()
+                device.closed.wait(.02)
+                return b''
+
+        device.lock, device.serial = SnapshotLock(), SerialDouble()
+        reader = threading.Thread(target=device._read)
+        reader.start()
+        try:
+            self.assertTrue(snapshot_ready.wait(2), 'Reader must capture the old stream')
+            device._detach()
+            old_ack.clear()
+            replacement, replacement_ack = self.ClientDouble(), threading.Event()
+            with device.lock:
+                device.client, device.connection, device.ack = replacement, 202, replacement_ack
+            resume.set()
+            self.assertTrue(processed.wait(2), 'Reader must finish the stale frame')
+            self.assertIsNone(device.failure)
+            self.assertTrue(old_client.closed)
+            self.assertIs(device.client, replacement)
+            self.assertEqual(device.connection, 202)
+            self.assertFalse(replacement.closed)
+            self.assertFalse(replacement_ack.is_set(), 'Old work must not acknowledge the new stream')
+            self.assertEqual(replacement.received, [])
+            self.assertEqual(device.sent, [])
+            if kind == hub.ACK:
+                self.assertTrue(old_ack.is_set(), 'ACK belongs to its captured stream')
+        finally:
+            device.closed.set()
+            resume.set()
+            reader.join(2)
+            self.assertFalse(reader.is_alive())
+
+    def test_stale_close_does_not_detach_replacement(self):
+        self.assert_stale_reader_preserves_replacement(hub.CLOSE)
+
+    def test_stale_data_send_failure_does_not_detach_replacement(self):
+        self.assert_stale_reader_preserves_replacement(hub.DATA)
+
+    def test_stale_ack_does_not_release_replacement_backpressure(self):
+        self.assert_stale_reader_preserves_replacement(hub.ACK)
+
+    def test_detach_requires_object_ownership_even_if_request_id_repeats(self):
+        device = self.make_hub()
+        old_owner = (device.connection, device.client, device.ack)
+        replacement, replacement_ack = self.ClientDouble(), threading.Event()
+        device.client, device.ack = replacement, replacement_ack
+        self.assertFalse(device._detach(old_owner))
+        self.assertIs(device.client, replacement)
+        self.assertEqual(device.connection, old_owner[0])
+        self.assertFalse(replacement.closed)
+        self.assertFalse(replacement_ack.is_set())
+        device._detach()
+
+    def test_forward_finally_preserves_replacement_and_uses_fresh_ack(self):
+        device = self.make_hub()
+        client, previous_ack = device.client, device.ack
+        previous_ack.set()
+        replacement, replacement_ack = self.ClientDouble(), threading.Event()
+
+        def opened(_kind, _payload, *, request):
+            self.assertEqual(request, 101)
+            self.assertIsNot(device.ack, previous_ack)
+            self.assertFalse(device.ack.is_set())
+            with device.lock:
+                device.client, device.connection, device.ack = replacement, 202, replacement_ack
+            return {'ok': True}
+
+        device.rpc = opened
+        with patch.object(hub.secrets, 'randbits', return_value=101):
+            device.forward(client, '192.168.4.1', 443)
+        self.assertIs(device.client, replacement)
+        self.assertFalse(replacement.closed)
+        self.assertFalse(replacement_ack.is_set())
+        self.assertEqual(device.sent, [(hub.CLOSE, 101, b'')])
+        device._detach()
+
+    def test_slow_detach_does_not_acknowledge_replacement(self):
+        device = self.make_hub()
+        old_client, old_ack = device.client, device.ack
+        shutdown_started, finish_shutdown = threading.Event(), threading.Event()
+        errors = []
+
+        def pause_shutdown():
+            shutdown_started.set()
+            if not finish_shutdown.wait(2):
+                raise TimeoutError('Test did not release old shutdown')
+
+        def detach():
+            try:
+                device._detach()
+            except Exception as exc:
+                errors.append(exc)
+
+        old_client.before_shutdown = pause_shutdown
+        worker = threading.Thread(target=detach)
+        worker.start()
+        try:
+            self.assertTrue(shutdown_started.wait(2))
+            replacement, replacement_ack = self.ClientDouble(), threading.Event()
+            with device.lock:
+                device.client, device.connection, device.ack = replacement, 202, replacement_ack
+            finish_shutdown.set()
+            worker.join(2)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(errors, [])
+            self.assertTrue(old_client.closed)
+            self.assertTrue(old_ack.is_set())
+            self.assertIs(device.client, replacement)
+            self.assertFalse(replacement.closed)
+            self.assertFalse(replacement_ack.is_set())
+        finally:
+            finish_shutdown.set()
+            worker.join(2)
+            device._detach()
+
+
 class HubFrameTests(unittest.TestCase):
     def test_actual_model_temperature_summary(self):
         fixture = ROOT/'lights/firmware/wiz/tests/fixtures/esp25_shrgb_01_1.38.0_model.json'

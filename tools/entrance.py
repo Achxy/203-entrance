@@ -31,6 +31,10 @@ TOOLS = ROOT / ".tools/idf-tools"
 KEY = LOCAL / "keys/firmware.pem"
 PUBLIC_KEY = LOCAL / "keys/firmware-public.pem"
 PROFILE = LOCAL / "device.json"
+OTA_WRITE_TIMEOUT = 8
+OTA_STATUS_TIMEOUT = 3
+OTA_RECOVERY_SECONDS = 25
+OTA_TOTAL_SECONDS = 295
 
 
 def run(args, *, capture=False, env=None, **kwargs):
@@ -445,8 +449,11 @@ class Device:
         self.connection = None
         self.recovered_chunks = 0
         self.tls12 = tls12
+        self._upload_started = None
+        self._upload_progress_started = None
 
     def request(self, method, path, body=None, *, ticket=None, headers=None, authenticated=True, timeout=20, raw=False):
+        """Apply a socket-operation timeout, not an end-to-end HTTP deadline."""
         if self.connection is None or self.connection.sock is None:
             context = ssl.create_default_context(cafile=self.profile["certificate"])
             if self.tls12:
@@ -456,11 +463,15 @@ class Device:
             # Identity is additionally pinned, so DHCP station addresses are also usable.
             context.check_hostname = False
             connection = http.client.HTTPSConnection(self.host, timeout=timeout, context=context)
-            connection.connect()
-            fingerprint = hashlib.sha256(connection.sock.getpeercert(binary_form=True)).hexdigest()
-            if not secrets.compare_digest(fingerprint, self.profile["certificate_sha256"]):
+            try:
+                connection.connect()
+                fingerprint = hashlib.sha256(connection.sock.getpeercert(binary_form=True)).hexdigest()
+                if not secrets.compare_digest(fingerprint, self.profile["certificate_sha256"]):
+                    raise ValueError("Device certificate pin changed; verify over USB before enrolling a replacement")
+            except BaseException:
                 connection.close()
-                raise ValueError("Device certificate pin changed; verify over USB before enrolling a replacement")
+                self.connection = None
+                raise
             self.connection = connection
         connection = self.connection
         connection.timeout = timeout
@@ -490,42 +501,87 @@ class Device:
         data = self.request("POST", "/api/v1/session", {"password": self.profile["admin_password"]}, authenticated=False, timeout=45)
         self.token = data["token"]
 
+    def begin_upload_budget(self):
+        # Call before /ota/start: its response can arrive well after the device
+        # starts its timers. Later progress is anchored before the accepted PUT.
+        self._upload_started = self._upload_progress_started = time.monotonic()
+
+    def _upload_budget_deadline(self):
+        if self._upload_started is None:
+            self.begin_upload_budget()
+        return min(self._upload_started + OTA_TOTAL_SECONDS,
+                   self._upload_progress_started + OTA_RECOVERY_SECONDS)
+
+    @staticmethod
+    def _require_upload_time(deadline, needed=0):
+        remaining = deadline - time.monotonic()
+        if remaining <= needed:
+            raise TimeoutError("Upload timing budget exhausted; restart the transfer")
+        return remaining
+
     def write_chunk(self, ticket, offset, data):
-        """Resolve a lost acknowledgement before retrying a bounded chunk."""
+        """Resolve a lost acknowledgement before replay, within a scheduling budget.
+
+        Blocking HTTP calls can overrun their socket timeout; checks after each
+        call prevent further requests or acceptance of a late acknowledgement.
+        """
+        deadline = self._upload_budget_deadline()
+        write_reserve = OTA_WRITE_TIMEOUT + OTA_STATUS_TIMEOUT
+
+        def pause(delay, reserve):
+            self._require_upload_time(deadline, delay + reserve)
+            time.sleep(delay)
+            self._require_upload_time(deadline, reserve)
+
         for attempt in range(3):
+            self._require_upload_time(deadline, write_reserve)
+            put_started = time.monotonic()
             try:
                 result = self.request("PUT", "/api/v1/ota/chunk", data, ticket=ticket,
                                       headers={"Content-Type": "application/octet-stream",
-                                               "X-Upload-Offset": str(offset)})
-                if attempt:
-                    self.recovered_chunks += 1
-                return result
+                                               "X-Upload-Offset": str(offset)}, timeout=OTA_WRITE_TIMEOUT)
+            except ssl.SSLCertVerificationError:
+                raise
             except APIError as error:
-                if error.code != "ESP_ERR_TIMEOUT":
+                if error.status in (401, 403) or error.code != "ESP_ERR_TIMEOUT":
                     raise
             except (OSError, http.client.HTTPException):
                 pass
+            else:
+                self._require_upload_time(deadline)
+                self._upload_progress_started = put_started
+                if attempt:
+                    self.recovered_chunks += 1
+                return result
+            self._require_upload_time(deadline)
             # Do not resend while the outcome is unknown. A ticket scopes this
             # read to the same transaction, including after a reconnect.
             for check in range(3):
+                self._require_upload_time(deadline, OTA_STATUS_TIMEOUT)
                 try:
                     state = self.request("GET", "/api/v1/ota/status", ticket=ticket,
-                                         authenticated=False, timeout=5)
-                    break
+                                         authenticated=False, timeout=OTA_STATUS_TIMEOUT)
+                except ssl.SSLCertVerificationError:
+                    raise
                 except (OSError, http.client.HTTPException):
+                    self._require_upload_time(deadline)
                     if check == 2:
                         raise TimeoutError("Cannot resolve upload acknowledgement; restart the transfer")
-                    time.sleep(0.5)
+                    pause(0.5, OTA_STATUS_TIMEOUT)
+                else:
+                    self._require_upload_time(deadline)
+                    break
             if state.get("phase") != "receiving":
                 raise ValueError("Transfer is no longer receiving: " + state.get("detail", "restart required"))
             accepted = state.get("received")
             if accepted == offset + len(data):
+                self._upload_progress_started = put_started
                 self.recovered_chunks += 1
                 return {"ok": True}
             if accepted != offset:
                 raise ValueError("Unexpected upload offset; refusing to replay data")
             if attempt < 2:
-                time.sleep(0.5 * (attempt + 1))
+                pause(0.5 * (attempt + 1), write_reserve)
         raise TimeoutError("Upload chunk failed after three attempts; restart the transfer")
 
     def wait_confirmed(self, ticket, expected, timeout=160):
@@ -563,9 +619,11 @@ def cmd_upload(args):
     tool("espsecure", "verify-signature", "--version", "2", "--keyfile", PUBLIC_KEY, binary)
     device = Device(args.host, tls12=getattr(args, "tls12", False))
     device.login()
+    device.begin_upload_budget()
     start = device.request("POST", "/api/v1/ota/start", {"size": metadata["size"], "sha256": metadata["sha256"]})
     ticket = start["ticket"]
     try:
+        device._require_upload_time(device._upload_budget_deadline())
         with binary.open("rb") as stream:
             offset = 0
             while chunk := stream.read(start["chunk_size"]):
@@ -573,8 +631,11 @@ def cmd_upload(args):
                 offset += len(chunk)
                 if offset % (128 * 1024) == 0 or offset == metadata["size"]:
                     print(f"Transferred {offset}/{metadata['size']} bytes", flush=True)
+        remaining = device._require_upload_time(device._upload_budget_deadline())
         try:
-            device.request("POST", "/api/v1/ota/finish", ticket=ticket)
+            device.request("POST", "/api/v1/ota/finish", ticket=ticket, timeout=min(20, remaining))
+        except ssl.SSLCertVerificationError:
+            raise
         except (OSError, http.client.HTTPException):
             # The verified image may already have rebooted before its response
             # arrived. Resolve that uncertainty through its candidate ticket.

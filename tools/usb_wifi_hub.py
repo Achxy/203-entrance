@@ -247,7 +247,7 @@ class Hub:
                     with self.lock:
                         pending = self.pending.get((kind, request))
                         stream = self.streams.get(request)
-                        client, connection = self.client, self.connection
+                        client, connection, ack = self.client, self.connection, self.ack
                     if stream is not None and kind in (WIZ_QUERY | 128, WIZ_META, WIZ_BODY, WIZ_DONE):
                         stream.put_nowait((kind, payload))
                     elif pending is not None:
@@ -257,14 +257,14 @@ class Hub:
                         try:
                             client.sendall(payload)
                         except OSError:
-                            self.send(CLOSE, connection)
-                            self._detach()
+                            if self._detach((connection, client, ack)):
+                                self.send(CLOSE, connection)
                         else:
                             self.send(ACK, connection)
                     elif kind == ACK and request == connection:
-                        self.ack.set()
+                        ack.set()
                     elif kind == CLOSE and request == connection:
-                        self._detach()
+                        self._detach((connection, client, ack))
         except Exception as exc:
             if not self.closed.is_set():
                 self.failure = f'{type(exc).__name__}: {exc}'
@@ -348,9 +348,15 @@ class Hub:
         finally:
             with self.lock: self.streams.pop(request, None)
 
-    def _detach(self):
+    def _detach(self, expected=None):
         with self.lock:
+            if expected is not None:
+                connection, client, ack = expected
+                if (self.connection != connection or self.client is not client or
+                        self.ack is not ack):
+                    return False
             client, self.client = self.client, None
+            ack = self.ack
             self.connection = 0
         if client:
             try:
@@ -358,7 +364,8 @@ class Hub:
             except OSError:
                 pass
             client.close()
-        self.ack.set()
+        ack.set()
+        return True
 
     def close(self):
         try:
@@ -388,8 +395,11 @@ class Hub:
     def forward(self, client, target, port, on_open=None):
         request = secrets.randbits(32) or 1
         client.settimeout(5)
+        # Reader callbacks and cleanup retain this generation's event even
+        # after a new stream replaces the client outside the lock.
+        ack = threading.Event()
         with self.lock:
-            self.client, self.connection = client, request
+            self.client, self.connection, self.ack = client, request, ack
         try:
             self.rpc(OPEN, ipaddress.IPv4Address(target).packed + struct.pack('!H', port),
                      request=request)
@@ -402,9 +412,9 @@ class Hub:
                 data = client.recv(MAX_DATA)
                 if not data:
                     break
-                self.ack.clear()
+                ack.clear()
                 self.send(DATA, request, data)
-                if not self.ack.wait(8) or self.connection != request:
+                if not ack.wait(8) or self.connection != request:
                     raise ConnectionError('Hub TCP write failed or timed out')
         except OSError:
             # The USB reader closes this descriptor when the remote TCP peer
@@ -416,7 +426,7 @@ class Hub:
                 if not self.closed.is_set():
                     self.send(CLOSE, request)
             finally:
-                self._detach()
+                self._detach((request, client, ack))
 
 
 def serve(args):

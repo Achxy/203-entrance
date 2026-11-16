@@ -30,25 +30,58 @@ async function api(path, { method = "GET", body, ticket, extra = {}, timeout = 2
     throw error;
   } finally { clearTimeout(timer); }
 }
-async function writeChunk(ticket, offset, data) {
+class UploadBudgetError extends Error {
+  constructor() { super("Upload recovery time is exhausted. Restart the transfer."); }
+}
+async function writeChunk(ticket, offset, data, timing) {
+  const now = performance.now();
+  timing ||= { started: now, progress: now };
+  const deadline = Math.min(now + 25000, timing.progress + 25000, timing.started + 295000);
+  const remaining = () => deadline - performance.now();
+  const requireTime = (minimum = 0) => {
+    if (remaining() <= minimum) throw new UploadBudgetError();
+  };
   for (let attempt = 0; attempt < 3; attempt++) {
+    // Leave time to reconcile a lost reply before attempting another write.
+    requireTime(11000);
+    const writeStarted = performance.now();
     try {
-      return await api("/ota/chunk", { method: "PUT", ticket, body: data,
+      const result = await api("/ota/chunk", { method: "PUT", ticket, body: data, timeout: 8000,
         extra: { "Content-Type": "application/octet-stream", "X-Upload-Offset": String(offset) } });
-    } catch (error) { if (error.status && error.code !== "ESP_ERR_TIMEOUT") throw error; }
+      requireTime();
+      timing.progress = writeStarted;
+      return result;
+    } catch (error) {
+      if (error instanceof UploadBudgetError || [401, 403].includes(error.status) ||
+          (error.status && error.code !== "ESP_ERR_TIMEOUT")) throw error;
+      requireTime();
+    }
     let state;
     for (let check = 0; check < 3; check++) {
-      try { state = await api("/ota/status", { ticket, timeout: 5000 }); break; }
+      requireTime(3000);
+      try {
+        state = await api("/ota/status", { ticket, timeout: 3000 });
+        requireTime();
+        break;
+      }
       catch (error) {
-        if (error.status) throw error;
+        if (error instanceof UploadBudgetError || error.status) throw error;
+        requireTime();
         if (check === 2) throw new Error("Cannot resolve upload acknowledgement. Restart the transfer.");
+        requireTime(500 + 3000);
         await sleep(500);
+        requireTime();
       }
     }
     if (state.phase !== "receiving") throw new Error(`Transfer is no longer receiving: ${state.detail || "restart required"}`);
-    if (state.received === offset + data.byteLength) return;
+    if (state.received === offset + data.byteLength) { timing.progress = writeStarted; return; }
     if (state.received !== offset) throw new Error("Unexpected upload offset. Restart the transfer.");
-    if (attempt < 2) await sleep(500 * (attempt + 1));
+    if (attempt < 2) {
+      const backoff = 500 * (attempt + 1);
+      requireTime(backoff + 11000);
+      await sleep(backoff);
+      requireTime();
+    }
   }
   throw new Error("Upload chunk failed after three attempts. Restart the transfer.");
 }
@@ -174,18 +207,22 @@ $("upload").addEventListener("click", async () => {
     if (view[0] !== 0xE9) throw new Error("This file is not an ESP application image.");
     const expected = new TextDecoder("ascii").decode(view.slice(48,80)).split("\0")[0];
     const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", data))].map((n) => n.toString(16).padStart(2,"0")).join("");
+    const timing = { started: performance.now() };
+    timing.progress = timing.started;
     const job = await api("/ota/start", { method: "POST", body: { size: file.size, sha256: hash } });
     for (let offset = 0; offset < file.size; offset += job.chunk_size) {
       if (cancelled) throw new Error("Transfer cancelled.");
       const end = Math.min(offset + job.chunk_size, file.size);
-      await writeChunk(job.ticket, offset, data.slice(offset,end));
+      await writeChunk(job.ticket, offset, data.slice(offset,end), timing);
       progress("Transferring", "Writing the inactive firmware slot. The running image remains available.", end / file.size * 100);
       text("progress-bytes", `${bytes(end)} / ${bytes(file.size)}`);
     }
     $("cancel").hidden = true;
+    const finishBudget = Math.min(timing.started + 295000, timing.progress + 25000) - performance.now();
+    if (finishBudget <= 0) throw new UploadBudgetError();
     progress("Verifying", "The device is checking compatibility, the complete image hash, and its signing key.");
     sessionStorage.setItem("203-update", JSON.stringify({ ticket: job.ticket, expected, expires: Date.now()+160000 }));
-    try { await api("/ota/finish", { method: "POST", ticket: job.ticket }); }
+    try { await api("/ota/finish", { method: "POST", ticket: job.ticket, timeout: Math.min(20000, finishBudget) }); }
     catch (error) { if (error.status) throw error; }
     await confirmUpdate(job.ticket, expected);
     loginView();
