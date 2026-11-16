@@ -1,4 +1,5 @@
 import importlib.util
+import copy
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,90 @@ spec.loader.exec_module(access)
 
 
 class LightsAccessTests(unittest.TestCase):
+    def run_deferred_provision(self, updates, error=None, acceptance_error=None):
+        before = {"compiled": True, "configured": False, "provisioning": False}
+        accepted = {"compiled": True, "provisioning": True, "provision_phase": "queued",
+                    "provision_generation": 7, "provision_boot": "1234567890abcdef",
+                    "provision_deadline_ms": 30000}
+        bundle = {"v": 1, "gateway_id": "test-device", "owner_key": "test-owner-key",
+                  "guest_password": "test-guest-key", "owner": {"salt": "22" * 16, "verifier": "11" * 384},
+                  "guest": {"salt": "33" * 16, "verifier": "11" * 384}}
+        original = copy.deepcopy(bundle)
+        replies = [before, acceptance_error or accepted, *updates]
+        clock = [0.0]
+        requests, sleeps, connections = [], [], []
+        instance = Mock(profile={"id": "test-device"}, connection=None)
+
+        def request(method, path, *args, **kwargs):
+            if instance.connection is None:
+                instance.connection = Mock()
+                connections.append(instance.connection)
+            requests.append((method, path, clock[0]))
+            item = replies.pop(0) if replies else accepted
+            if isinstance(item, BaseException):
+                raise item
+            return copy.deepcopy(item)
+
+        def sleep(seconds):
+            self.assertIsNone(instance.connection, "TLS retained during an allocation quiet window")
+            sleeps.append(seconds)
+            clock[0] += seconds
+
+        instance.request.side_effect = request
+        with patch.object(access, "Device", return_value=instance), \
+                patch.object(access, "protected_read", return_value=bundle), \
+                patch.object(access, "verifier", return_value=bytes.fromhex("11" * 384)), \
+                patch.object(access.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(access.time, "sleep", side_effect=sleep), patch("builtins.print"):
+            if error:
+                with self.assertRaisesRegex(*error):
+                    access.provision(Path("/unused-test-owner-bundle.json"), "127.0.0.1:18443")
+            else:
+                access.provision(Path("/unused-test-owner-bundle.json"), "127.0.0.1:18443")
+        self.assertEqual(bundle, original)
+        self.assertIsNone(instance.connection)
+        for connection in connections:
+            connection.close.assert_called_once_with()
+        self.assertEqual(sum(method == "POST" for method, _, _ in requests), 1)
+        return requests, sleeps, accepted
+
+    def test_deferred_provision_releases_tls_and_correlates_durable_outcome(self):
+        committed = {"provision_boot": "1234567890abcdef", "provision_generation": 7,
+                     "provision_phase": "committed", "provision_result": 0,
+                     "configured": True, "provisioning": False, "active": False}
+        requests, sleeps, _ = self.run_deferred_provision([OSError("peak busy"), committed])
+        self.assertEqual([t for method, _, t in requests if method == "GET"], [0.0, 4.0, 9.0])
+        self.assertEqual(sleeps, [4, 5])
+
+    def test_deferred_provision_expiry_and_uncertain_storage_never_repost(self):
+        for phase, unknown, message in [("expired", False, "expired"),
+                                        ("cancelled", False, "cancelled"),
+                                        ("failed", True, "storage outcome is unknown")]:
+            with self.subTest(phase=phase):
+                status = {"provision_boot": "1234567890abcdef", "provision_generation": 7,
+                          "provision_phase": phase, "provisioning": False,
+                          "provision_outcome_unknown": unknown}
+                requests, _, _ = self.run_deferred_provision([status], (RuntimeError, message))
+                self.assertEqual(len(requests), 3)
+
+    def test_deferred_provision_reboot_and_replacement_are_unknown_not_success(self):
+        for boot, generation in [("0000000000000001", 7), ("1234567890abcdef", 8)]:
+            with self.subTest(boot=boot, generation=generation):
+                status = {"provision_boot": boot, "provision_generation": generation,
+                          "provision_phase": "committed", "configured": True, "provision_result": 0}
+                self.run_deferred_provision([status], (RuntimeError, "request changed"))
+
+    def test_deferred_provision_poll_deadline_is_not_renewed(self):
+        requests, sleeps, _ = self.run_deferred_provision([], (TimeoutError, "outcome is unknown"))
+        self.assertEqual(sum(sleeps), 35)
+        self.assertEqual(max(t for _, _, t in requests), 34)
+
+    def test_deferred_provision_lost_acceptance_is_unknown_and_never_reposted(self):
+        requests, sleeps, _ = self.run_deferred_provision(
+            [], (RuntimeError, "outcome is unknown"), OSError("lost acceptance response"))
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(sleeps, [])
+
     def test_native_verifier_preserves_leading_zero_digest_and_salt(self):
         fixtures = json.loads((ROOT / "lights/security/Tests/LightsSecurityTests/Fixtures/idf61.json").read_text())
         fixture = fixtures["leading_zero_verifier_fixture"]

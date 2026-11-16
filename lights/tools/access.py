@@ -7,6 +7,7 @@ The gateway stores SRP verifiers; the recoverable owner bundle stays local.
 from __future__ import annotations
 import argparse
 import hashlib
+import http.client
 import importlib.util
 import json
 import os
@@ -19,7 +20,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
-from entrance import Device, PROFILE, SDK  # noqa: E402
+from entrance import APIError, Device, PROFILE, SDK  # noqa: E402
 from firmware import IDF_COMMIT  # noqa: E402
 
 DEFAULT_BUNDLE = ROOT / ".local/lights/owner-access.json"
@@ -85,26 +86,69 @@ def provision(path: Path, host: str | None) -> None:
         expected = verifier("203-" + role, bundle[secret], bytes.fromhex(entry["salt"]))
         if not secrets.compare_digest(expected.hex(), entry["verifier"]):
             raise ValueError("Access bundle verifier does not match its credential")
-    device.login()
-    before = device.request("GET", "/api/v1/lights")
-    if not before.get("compiled"):
-        raise ValueError("The installed firmware does not contain the lighting gateway")
-    if before.get("configured") or before.get("provisioning"):
-        raise ValueError("Lighting is already configured or provisioning; it was not overwritten")
-    body = {f"{role}_{name}": bundle[role][name]
-            for role in ("owner", "guest") for name in ("salt", "verifier")}
-    device.request("POST", "/api/v1/lights/provision", body)
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        current = device.request("GET", "/api/v1/lights")
-        if not current.get("provisioning"):
-            if current.get("provision_result") != 0 or not current.get("configured"):
-                raise RuntimeError("Gateway provisioning failed; inspect its resource/storage status")
-            print("Gateway credential record committed. Physical bulb and coexistence tests remain required.")
-            print(json.dumps(current, indent=2))
-            return
-        time.sleep(1)
-    raise TimeoutError("Provisioning outcome is unknown; check status before any retry")
+    try:
+        device.login()
+        before = device.request("GET", "/api/v1/lights")
+        if not before.get("compiled"):
+            raise ValueError("The installed firmware does not contain the lighting gateway")
+        if before.get("configured") or before.get("provisioning"):
+            raise ValueError("Lighting is already configured or provisioning; it was not overwritten")
+        if before.get("quarantined"):
+            raise ValueError("Lighting is quarantined after an abnormal reset; inspect status before an explicit retry")
+        body = {f"{role}_{name}": bundle[role][name]
+                for role in ("owner", "guest") for name in ("salt", "verifier")}
+        try:
+            accepted = device.request("POST", "/api/v1/lights/provision", body)
+        except APIError:
+            raise
+        except Exception as error:
+            raise RuntimeError("Provisioning outcome is unknown; check status before any retry") from error
+        finally:
+            close_connection(device)
+        generation, boot = accepted.get("provision_generation"), accepted.get("provision_boot")
+        if (type(generation) is not int or not 0 < generation <= 0xffffffff or
+                not isinstance(boot, str) or len(boot) != 16 or
+                any(c not in "0123456789abcdef" for c in boot)):
+            raise RuntimeError("Provisioning acceptance cannot be correlated; check status before any retry")
+        # The server's fixed30s admission deadline does not extend. Allow5s
+        # solely for observing a transaction already admitted before that limit.
+        deadline = time.monotonic() + 35
+        time.sleep(4)
+        while time.monotonic() < deadline:
+            current = None
+            try:
+                current = device.request("GET", "/api/v1/lights",
+                                         timeout=min(5, max(0.1, deadline - time.monotonic())))
+            except (OSError, http.client.HTTPException):
+                # Read-only polling may overlap a guarded allocation peak.
+                # Keep the original deadline and never replay the POST.
+                pass
+            finally:
+                close_connection(device)
+            if current is None:
+                time.sleep(min(5, max(0, deadline - time.monotonic())))
+                continue
+            if current.get("provision_boot") != boot or current.get("provision_generation") != generation:
+                raise RuntimeError("Gateway boot or provisioning request changed; check status before any retry")
+            if current.get("provision_outcome_unknown"):
+                raise RuntimeError("Provisioning storage outcome is unknown; do not overwrite or automatically retry")
+            phase = current.get("provision_phase")
+            if phase == "committed" and current.get("provision_result") == 0 and current.get("configured"):
+                print("Gateway credential record committed. Physical bulb and coexistence tests remain required.")
+                print(json.dumps(current, indent=2))
+                return
+            if phase in ("failed", "expired", "cancelled") or not current.get("provisioning"):
+                raise RuntimeError(f"Gateway provisioning {phase or 'failed'}; inspect its resource/storage status")
+            time.sleep(min(5, max(0, deadline - time.monotonic())))
+        raise TimeoutError("Provisioning outcome is unknown; check status before any retry")
+    finally:
+        close_connection(device)
+
+
+def close_connection(device: Device) -> None:
+    if device.connection is not None:
+        device.connection.close()
+        device.connection = None
 
 
 def retry(host: str | None) -> None:
@@ -126,9 +170,7 @@ def retry(host: str | None) -> None:
     finally:
         # Leave the allocation gate a quiet window after an accepted retry. The
         # existing bounded recovery poll can activate after this TLS session ends.
-        if device.connection is not None:
-            device.connection.close()
-            device.connection = None
+        close_connection(device)
 
 
 def main() -> None:

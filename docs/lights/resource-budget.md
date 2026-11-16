@@ -2,12 +2,15 @@
 
 Measured 2026-11-16 with ESP-IDF v6.1 commit
 `fff9895c82d744c7237be8847347bdd1b07c6643`. This is a build and source audit,
-not combined-device qualification. No probe was flashed, no light was controlled,
-and neither the production build nor the Mac's network was changed.
+not combined-device qualification. These audit actions did not flash hardware,
+control a light, replace the retained production build or change the Mac's
+network. Subsequent installation and live qualification are recorded separately;
+this document's build flags are not a statement of the device's current state.
 
-The measured links below precede the newly added local time service and its
-bounded 20-socket candidate profile. Those changes are awaiting the next isolated
-build; their actual static delta is not included in the existing numbers.
+The latest measurement is the isolated, production-key-signed **0.3.0-rc.16**
+hardware-qualification build. It includes the local time service, bounded
+20-socket profile, stack metrics and abnormal-reset lighting quarantine. Earlier
+disposable-key measurements remain below as historical snapshots.
 
 ## Decision
 
@@ -18,16 +21,16 @@ link containing the current display application, BLE transport, Security2
 sessions, lighting authority, gateway persistence, WiZ driver and guarded runtime fits the
 existing signed OTA slot at **1,708,032 bytes**, with **258,048 bytes remaining**.
 
-That integrated link uses **128,949 bytes of unified internal static RAM**. It leaves
-**192,347 bytes before runtime allocations**. This is 35,413 bytes less static RAM
-than RC15. The complete 21,616 B runtime is allocated lazily; shared display/game
+That integrated link uses **129,269 bytes of unified internal static RAM**. It leaves
+**192,027 bytes before runtime allocations**. This is 35,093 bytes less static RAM
+than RC15. The complete 22,120 B runtime is allocated lazily; shared display/game
 workspace and relay buffers also reduce static storage. BLE stacks/pools, authentication peaks, the new application worker,
 TLS, Wi-Fi station state, JSON and storage transactions still consume heap.
 The runtime, its 10,240 B worker and known BLE stack/MSYS lower bound together
-consume at least **42,352 B** when active, before other radio/crypto/TLS allocations.
+consume at least **42,856 B** when active, before other radio/crypto/TLS allocations.
 The separate three-entry lighting reply queue adds at least 3,156 B, for a
-**45,508 B known lower bound**, before its queue header and those other allocations.
-Consequently the candidate is **not cleared for deployment** and does not yet
+**46,012 B known lower bound**, before its queue header and those other allocations.
+Consequently the candidate is **not hardware-qualified** and does not yet
 prove that five bulbs plus BLE can run without affecting the display. The
 numeric activation and qualification gates below intentionally fail closed.
 
@@ -69,23 +72,40 @@ identify when that maximum occurred or provide a percentile distribution.
 These are baseline limitations, not regressions attributable to lighting.
 They must not be described as a completed stability gate.
 
-A fresh read through the USB maintenance hub, retained privately in
-`.local/lights/production-baseline.json`, still reports RC15 at uptime
+A subsequent point-in-time read through the USB maintenance hub, retained privately in
+`.local/lights/production-baseline.json`, reported RC15 at uptime
 6,787,468 ms: **55,872 B free**, **36,864 B largest block**, and **28,588 B
 lifetime minimum**. This is one status snapshot from the production firmware,
 not a lighting measurement, a client-free idle watermark or a soak. The active
 display has no stored media clip. Keep this measurement separate from predicted
-savings in an uninstalled candidate.
+savings predicted from candidate build artifacts.
+
+A later RC15 baseline attempt, recorded in
+`.local/lights/rc15-baseline-soak.json`, has **148 retained samples** spanning
+**2,398.952 seconds** against a 3,600-second requirement and reports
+`passed: false`, `Stale or missing soak telemetry`. The host-run investigation
+identified a **33.295-second login renewal** after the preceding **15-second
+poll sleep**, exceeding the **45-second telemetry gate**. The rejected late
+poll is not a retained sample, so the retained inter-sample gaps alone do not
+show that terminal failure. This is a failed monitoring-continuity gate, not a
+completed 60-minute soak or evidence attributing a reset to lighting. The host
+scheduling correction passed seven soak-unit tests; a new continuous run is
+still needed. Its status belongs in the separate validation record.
+The failed artifact's SHA-256 at this audit snapshot was
+`28dfa35597e446345b8530d896d522d0a0d8e297e0effbcbc0bc8acbbf989093`.
 
 ## Reproducible isolated measurements
 
 The checked-in experiment is [the probe project](../../lights/firmware/probe/README.md).
 It uses the pinned local SDK/toolchain and already resolved dependencies with
 the component manager disabled. Build objects are reused between profiles.
-All combined images use an ignored, disposable RSA-3072 test key, not the
-production signing key, and cannot pass the installed device's image trust check.
+The standalone and historical combined probes, plus the default-off regression,
+use ignored, disposable RSA-3072 keys and cannot pass the installed device's
+image trust check. RC16 was built separately with the existing protected
+production key, explicitly for controlled hardware qualification; its signature
+does not establish hardware reliability or a stable release.
 
-The combined project snapshots application sources into
+The original combined probe snapshots application sources into
 `.local/lights-resource-probe/combined/source`; it does not edit production
 sources or `.tools`. Public API references keep complete code paths in the link.
 The fixture is not a functioning gateway integration: its credentials are
@@ -125,23 +145,90 @@ increment in production because production already uses cryptography.
 | Snapshot: above + gateway, NVS and WiZ driver reserved statically | 1,708,032 | 174,325 | 146,971 |
 | Snapshot: integrated root candidate with guarded runtime allocated lazily | 1,708,032 | 153,381 | 167,915 |
 | Snapshot: display/relay/WiZ memory changes, before recovery diagnostics | 1,708,032 | 128,869 | 192,427 |
-| Final enabled candidate: above + bounded inactive-runtime recovery and diagnostics | **1,708,032** | **128,949** | **192,347** |
-| Final default-off regression, separate disposable key | **1,314,816** | **164,362** | **156,934** |
+| Snapshot: disposable-key candidate + bounded inactive-runtime recovery and diagnostics | 1,708,032 | 128,949 | 192,347 |
+| Last default-off full regression, separate disposable key | 1,314,816 | 164,362 | 156,934 |
+| **RC16 hardware candidate:** local time service, 20 sockets, stack metrics and reset quarantine; production key | **1,708,032** | **129,269** | **192,027** |
 
 Each row is a specific snapshot. The gateway snapshot's source hashes, artifact hashes,
 map, resolved configuration and build log are retained under
 `.local/lights-resource-probe/combined/wifi-bt-suspend-transport-gateway-*`.
 The preceding gateway snapshot did not include the final runtime coordinator.
-The final enabled row is the actual root project with `ENTRANCE_LIGHTS=ON`, built through
+The disposable-key runtime snapshot is the actual root project with
+`ENTRANCE_LIGHTS=ON`, built through
 `lights/tools/build_candidate.py`. Its source digest, resolved profile, size
 reports, signature check and unchanged-production-artifact evidence are in
 `.local/lights-candidate/summary.json`. Its signed image SHA-256 is
 `847fadfef9c7a535cd78d7f97171b911e03d146d0a5fb17a3ccd32fa53715cca`.
 Its ELF SHA-256 is `9dd77077161ae5fbcc7f7bbb2cae9dfe1c26ad9cd9e22e5761567bcb1a031c03`.
 The separate default-off evidence is in `.local/lights-default-off/summary.json`;
-its static RAM exactly matches the retained baseline, with Bluetooth disabled.
+its static RAM exactly matches the retained baseline, with Bluetooth disabled
+and 16 sockets. Its signed image SHA-256 is
+`86460e501dfc65ebf0f4cfe316ff6e586c6bf287b8022eb8380f5cc032472313`.
+That full default-off build predates the final RC16 source checkpoint; it is not
+presented as a same-revision enabled/disabled comparison. All six protected
+default-off files and the retained production files were verified unchanged by
+the later RC16 build.
 Differences between snapshots include actual source revisions as well as
 storage placement; do not describe them all as configuration-only deltas.
+
+### RC16 provenance and signature audit
+
+The hardware candidate used the clean source commit
+`54bdb752c6e5c6d805647809461a839241fccfc7`, tree
+`658b048930245f6b6ad6926fab5359c407fe38fc`, with no tag required for this local
+qualification. Its source-input SHA-256 is
+`282574a626339a6d8103ec1ed1516204a5d182fc87498c533fd04a060dd6813c`.
+The build completed at `2026-11-15T23:00:19Z` (2026-11-16 locally). Files are
+under `.local/lights-hardware/0.3.0-rc.16/`:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `build/203-entrance.bin` | `5d3ee49dc711360821b9dd74cd1bf160146da2bfd773cb7e9287b3a9e745ee8c` |
+| `build/203-entrance.elf` | `2a5d014265bd9dbcabb5042302d646fcf7b47ea027c0efbffa7c09d76a7304f2` |
+| `build/203-entrance.map` | `68e15a9e234bb9bef5ef3733fc38f7293e46cbdd929a759ed7b68e97a40b4bec` |
+| `sdkconfig` | `b542aa38d11c297941b9497fba0512af4d674446ab120840fa7162337fa3e1ea` |
+| `summary.json` | `f951607cf265c8620c94f152121f1593a47c69d7fd0901cf30406e06801c6422` |
+| `signature-block-audit.json` | `16e51448132c631767b228dce8b4d8cff3fd9479e442f2a7ba5c0037336f1fb2` |
+
+The builder verified the baseline and candidate using the production public key,
+SDK signing/rollback configuration, sensitive-log compilation caps, stable
+source/dependency fingerprints and before/after preservation of production
+artifacts and signing files. The output directory is mode 0700; provenance is mode 0600.
+No private key was generated, replaced or copied.
+
+An independent read-only audit using pinned `espsecure` 5.6.0 checked **all three
+signature slots**, rather than stopping at the first absent slot. Exactly block
+0 is valid RSA-3072; its complete RSA verification primitives match the
+production public key, and its image digest matches the signed content. The
+remaining **2,880 bytes** of the signature sector are all erased (`0xff`), so
+there is no second signature block extending image trust. Recorded public-key
+digests are:
+
+- Canonical public DER SHA-256:
+  `2da2432cc268727f4dfbffb42fa9aba686a5a24ef9b514a1abd9e34915cd60d1`.
+- ESP Secure Boot key-format digest:
+  `6be30c92b1b84c8bef68979259645902e8fa9f86ed4b59afdd2cf0c31469267c`.
+
+These are public-key fingerprints, not private credentials. No eFuse operation,
+installation, provisioning or publication formed part of this build/audit.
+
+RC16's static total consists of **57,144 B BSS**, **15,361 B data** and
+**56,764 B RAM-resident code**. Compared with the prior 128,949 B candidate, the
+increase is **320 B**, accounted for by linked symbols/archive measurements:
+
+| Addition | Static bytes |
+| --- | ---: |
+| Four socket entries | 80 |
+| IPv4 multicast membership entries | 48 |
+| IPv6 multicast membership entries | 112 |
+| Received-time anchor | 24 |
+| Runtime status, stack sampler and boot quarantine fields | 51 |
+| Link alignment | 5 |
+
+The socket limit's measured static cost is therefore **240 B**. This excludes
+heap allocations for live sockets, TLS, packet queues and actual traffic. The
+local time helper separately adds **504 B** to the lazily allocated runtime
+context; it does not create another task or stack.
 
 Turning off the two Wi-Fi IRAM optimizations saved 19,732 B across the Wi-Fi
 archives in this target. NimBLE low-speed placement saved a further 182 B in
@@ -171,10 +258,11 @@ CONFIG_BT_CTRL_RUN_IN_FLASH_ONLY=y
 CONFIG_SPI_FLASH_AUTO_SUSPEND=y
 CONFIG_SPI_FLASH_ROM_IMPL=n
 CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
+CONFIG_LWIP_MAX_SOCKETS=20
 ```
 
-The next enabled profile also sets `CONFIG_LWIP_MAX_SOCKETS=20`, checked by the
-builder. The combined management listeners/clients, relay, WiZ, AP DNS and NTP
+RC16 resolves `CONFIG_LWIP_MAX_SOCKETS=20`, checked by the builder. The combined
+management listeners/clients, relay, WiZ, AP DNS and NTP
 require at least 18 slots including release headroom. The service refuses an
 insufficient configured budget; default-off retains 16. This bounded increase
 does not claim that 20 simultaneous sockets are a qualified heap workload.
@@ -205,7 +293,9 @@ nominal size.
 
 ## Runtime allocations not established by the linker
 
-Sizes below were read from the final integrated C3 ELF's DWARF, not inferred from macOS ABI:
+Runtime/service sizes below were read from the RC16 C3 ELF's DWARF; unchanged
+authority and SDK internals retain their earlier C3 measurements. None are
+inferred from macOS ABI:
 
 | Object | C3 bytes | Accounting |
 | --- | ---: | --- |
@@ -219,14 +309,14 @@ Sizes below were read from the final integrated C3 ELF's DWARF, not inferred fro
 | `ls_manager_t` | 1,040 | Three secure-session entries, excluding allocated crypto |
 | `lb_event_t` | 1,072 | Caller-owned BLE event buffer |
 | `lrq_t` | 3,384 | Bounded relay queue inside runtime |
-| `runtime_t` | 21,616 | Complete retained service/session/adapter/queue/input aggregate |
+| `runtime_t` | 22,120 | Complete retained service/session/adapter/queue/input/local-time aggregate |
 | `light_reply_t` | 1,052 | Three separate queued replies, excluding queue metadata |
 | SDK Security2 `session_t` | 60 | Excludes SRP/PSA allocations |
 | `esp_srp_handle` / `mbedtls_mpi` | 80 / 8 | Exclude big-number limbs |
 
 The earlier gateway snapshot reserved service and adapter statically, totaling
-20,060 B at that revision. The final integrated runtime allocates its complete
-21,616 B aggregate on activation. Lazy allocation reduces dormant memory;
+20,060 B at that revision. RC16 allocates its complete **22,120 B** aggregate on
+activation, 504 B more than the preceding 21,616 B runtime. Lazy allocation reduces dormant memory;
 it does not reduce active memory. Do not keep the standalone authority
 object as well. A policy write additionally allocates a 3,176 B record and a
 3,072 B encoded buffer, before NVS, JSON and crypto overhead.
@@ -298,7 +388,7 @@ not establish the resulting live heap, radio latency or display timing.
 | Share display/game pixel workspace; retain encoded custom clips only during play/pause | **22,455 B less BSS**: display 12,219 B + arcade 10,236 B; text grows 536 B | Candidate-only; 16 host regression tests captured 19,154 SPI frames across default/candidate mode and failure transitions; physical timing remains open |
 | Create the release worker only for checks/downloads | **10,240 B idle stack** plus TCB, from the task allocation | Candidate-only; six-hour scheduling, explicit requests and operation locking remain; actual free-heap change unmeasured |
 | Copy only the relay prefix actually needed | **2,056 B less BSS** | Preserves the existing connection and queue semantics; default-off build remains unchanged |
-| Share WiZ request/response storage and receive directly into the bounded caller buffer | **4,100 B less retained driver + adapter storage**; the runtime aggregate falls by 4,104 B including alignment | C3 DWARF and host malformed/oversized-response tests; UDP hardware tests remain open |
+| Share WiZ request/response storage and receive directly into the bounded caller buffer | **4,100 B less retained driver + adapter storage**; the earlier runtime aggregate fell by 4,104 B including alignment, before RC16's separate 504 B helper addition | C3 DWARF and host malformed/oversized-response tests; UDP hardware tests remain open |
 | Reuse the outbound relay connection | Avoids a second permanent WebSocket/TLS stack/session | Bounded lighting messages share the existing relay; concurrent hardware behavior unverified |
 
 These are different kinds of savings. Static savings are already included in
@@ -348,8 +438,8 @@ values or permission to flash:
 
 | Gate | Required result |
 | --- | --- |
-| Signed image reserve | ≤1,835,008 B (`0x1C0000`), including signing padding; leaves 128 KiB in each existing slot. Latest probe passes this link-only gate. |
-| Worker creation | Actual implementation requires ≥109,568 B free internal 8-bit heap (96 KiB allowance +10 KiB worker +1 KiB task margin), largest block ≥24,576 B: max(24 KiB, runtime size +1 KiB). The optimized candidate has not been measured at this gate. |
+| Signed image reserve | ≤1,835,008 B (`0x1C0000`), including signing padding; leaves 128 KiB in each existing slot. RC16 passes this image-size gate. |
+| Worker creation | Actual implementation requires ≥109,568 B free internal 8-bit heap (96 KiB allowance +10 KiB worker +1 KiB task margin), largest block ≥24,576 B: max(24,576, 22,120 +1,024). RC16 has not been measured on hardware at this gate. |
 | Runtime activation | After worker creation, ≥98,304 B free and ≥24,576 B largest block before allocating the retained context. These are provisional safeguards, not measured operating requirements. |
 | Each startup phase | Preserve ≥32,768 B free internal heap after allocation/init; unwind lighting on failure, keep display and existing management alive. |
 | Inactive runtime recovery | If configuration remains valid and startup was refused for resources, retry through the existing relay loop after 30 seconds, doubling up to five minutes. Do not retry during OTA/quiescence, without configuration, on storage corruption, or while another worker exists. |
@@ -369,18 +459,22 @@ erase/write while BLE is connected; source support for auto-suspend is not that
 test. Repeat disconnect/reconnect and allocation-failure cleanup to prove memory
 returns. Do not weaken watchdogs or existing healthy-trial confirmation.
 
-The final runtime coordinator and root transport integration have now linked,
-but their execution, AP capacity, optional Internet forwarding to bulbs,
-real commissioning and combined hardware tests remain unverified. Historical
+The final runtime coordinator and root transport integration have linked. This
+build audit does not validate their execution, AP capacity, optional Internet
+forwarding to bulbs, real commissioning or combined hardware behavior. Historical
 RC15 free heap plus the static saving does not establish that the activation
-gate can pass. Production stays on its
-existing signed firmware until a separate candidate passes these gates.
+gate can pass. At the build checkpoint, production remained on RC15. RC16 is a
+signed candidate for controlled qualification, not evidence that these gates
+have passed or that routine unattended lighting deployment is ready.
 
 Status diagnostics distinguish the failed startup/admission stage, its reason,
 captured free heap/largest block, required thresholds, and bounded retry timing.
 The pure queue and recovery suites passed ASan/UBSan checks, including backoff,
 eligibility, single-attempt consumption and overflow. These do not exercise
-FreeRTOS allocation failure or startup recovery on a physical C3.
+FreeRTOS allocation failure or startup recovery on a physical C3. RC16 also adds
+boot-local quarantine after abnormal resets and bounded sampling of its own
+worker's minimum unused stack once per second; neither is a measured hardware
+recovery/stack result yet.
 
 ## Evidence files and reproduction
 
@@ -394,23 +488,44 @@ Run from the repository root using the pinned Python environment:
 .tools/idf-tools/python_env/idf6.1_py3.12_env/bin/python lights/tools/build_candidate.py --default-off
 ```
 
+The exact RC16 hardware build used the clean source commit recorded above:
+
+```sh
+.tools/idf-tools/python_env/idf6.1_py3.12_env/bin/python lights/tools/build_candidate.py --hardware-candidate --version 0.3.0-rc.16
+```
+
+Use that source checkpoint to reproduce the recorded version. Changed sources
+or build inputs require a new explicit prerelease; the builder refuses to
+reassign an existing hardware version to different inputs. Hardware mode only
+builds and verifies local artifacts; it does not install them.
+
 Local evidence is intentionally ignored: `probe-summary.json`, `baseline-size.json`,
 stage maps/size reports, `c3-type-sizes.json`, `c3-gateway-type-sizes.json`, and
 combined per-profile summaries/logs/configs under `.local/lights-resource-probe/`.
-The integrated candidate adds `.local/lights-candidate/summary.json`,
+The historical disposable-key candidate adds `.local/lights-candidate/summary.json`,
 `type-sizes.json`, `signature-check.log`, `size.json`, `archives.json` and the
 retained build outputs. It passes build, test-key signature, reserved image size,
 SDK logging caps and production-artifact preservation checks only.
 The independent `.local/lights-default-off` build passes its disabled-Bluetooth,
 signature, size and production-preservation checks with a different disposable
-key. The central host runner passed 23 groups without skips; after the final
-runtime-only change, its queue/recovery sanitizer checks and both firmware modes
-were rerun. Hosted CI definitions were added separately but have not run yet.
-The builder also now supports an explicit `--hardware-candidate --version ...`
-mode for a clean, newer prerelease using the existing protected production key.
-It isolates outputs under `.local/lights-hardware/<version>` and does not flash
-or publish; the measurements above are still from disposable-key builds.
-Signing-mode/key/version/output guards have separate local tests. A hardware-key
-build, when performed, needs its own provenance and physical qualification record.
+key. The later local aggregate checkpoint passed **26 groups with zero skips**,
+including 14 builder-safety tests, five runtime/local-time sanitizer suites,
+39 web tests, 16 web-security tests, 45 relay tests and the native checks. Its
+root regression passed 93 tests. The final quarantine/stack additions then
+received six targeted suites and a 96-test root regression, recorded in the
+[validation report](validation-2026-11-16.md); these are separate checkpoints,
+not a claim that the earlier aggregate covered later edits. Local checks do
+not establish a hosted CI pass.
+
+The RC16 build adds `.local/lights-hardware/0.3.0-rc.16/summary.json`,
+`type-sizes.json`, `signature-check.log`, `baseline-signature-check.log`,
+`signature-block-audit.json`, `size.json`, `archives.json` and retained build
+outputs. It passed clean-source, pinned-SDK, production-key signature, image-size,
+resolved-profile, sensitive-log-cap and artifact/key-preservation gates. Its
+provenance explicitly records `test_key_only: false`,
+`hardware_qualification_only: true`, `flashed: false` and
+`runtime_qualified: false`. These flags describe the builder's completed action,
+not subsequent device state. Installation and physical qualification remain
+separate records in the [validation report](validation-2026-11-16.md).
 Do not publish the local directory or treat a test-key binary as a release.
 This report contains no device credentials, Wi-Fi passwords or production keys.

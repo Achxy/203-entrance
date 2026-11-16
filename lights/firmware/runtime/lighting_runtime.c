@@ -28,6 +28,7 @@
 #define LRT_LARGEST (24u*1024u)
 #define LRT_STACK_BYTES 10240u
 #define LRT_TASK_MARGIN 1024u
+#define LRT_POLL_FRESH_MS UINT64_C(5000)
 
 typedef struct {
     lgs_service_t service;
@@ -36,10 +37,14 @@ typedef struct {
     llt_idf_t local_time;
     lgs_nvs_t nvs;
     lrq_t relay;
-    union { lrq_work_t relay; lb_event_t ble; } input;
+    /* Before runtime is published or BLE starts, the worker alone owns this
+     * workspace. Provisioning reuses it and wipes it before normal dispatch. */
+    union { lrq_work_t relay; lb_event_t ble; lgs_profile_t provisioning[2]; } input;
     uint64_t application_deadline, next_ble_attempt;
     bool close_guests, session_ready, ble_started, suspended;
 } runtime_t;
+_Static_assert(sizeof(((runtime_t *)0)->input)==sizeof(lrq_work_t)||
+               sizeof(((runtime_t *)0)->input)==sizeof(lb_event_t),"provisioning must fit existing input workspace");
 
 static lrt_config_t configuration;
 static lrt_status_t state;
@@ -49,8 +54,12 @@ static StaticSemaphore_t mutex_storage;
 static SemaphoreHandle_t mutex;
 static _Atomic bool pause_requested;
 static _Atomic bool worker_admitted;
-static lgs_profile_t pending_profiles[2];
+_Static_assert(sizeof(lgs_profile_t)*2==LPP_PROFILE_BYTES,"provision profile size");
 static bool provision_pending, start_called;
+static lpp_job_t provision_job;
+static uint32_t worker_provision_generation;
+static bool poll_seen;
+static uint64_t poll_at_ms;
 static lrr_t recovery;
 static lrb_t boot_gate;
 static bool stack_sample_clock_set;
@@ -137,6 +146,32 @@ static bool peak_begin(lrt_peak_t peak,size_t minimum,lrt_failure_stage_t stage)
 static void peak_end(lrt_peak_t peak){configuration.end_peak(peak,configuration.context);}
 static bool should_pause(void)
 {return pause_requested||configuration.quiescing(configuration.context);}
+/* The shared profile slot is only copied/wiped while holding mutex. Once the
+ * worker enters COMMITTING it owns a private copy; cancellation cannot erase a
+ * buffer borrowed by NVS or misreport a completed transaction as cancelled. */
+static void provision_closed_locked(esp_err_t result,bool unknown)
+{
+    provision_pending=false;state.provisioning=false;state.provision_result=result;
+    state.provision_outcome_unknown=unknown;
+}
+static void provision_failed_locked(uint32_t generation,esp_err_t result,bool unknown)
+{
+    if(lpp_complete(&provision_job,generation,false))provision_closed_locked(result,unknown);
+}
+static void provision_expire_locked(uint64_t now)
+{
+    if(lpp_expire(&provision_job,now)) {
+        provision_closed_locked(ESP_ERR_TIMEOUT,false);state.last_error=ESP_ERR_TIMEOUT;
+        notify_locked();
+    }
+}
+static void provision_cancel_locked(void)
+{
+    if(lpp_cancel(&provision_job)) {
+        provision_closed_locked(ESP_ERR_INVALID_STATE,false);state.last_error=ESP_ERR_INVALID_STATE;
+        notify_locked();
+    }
+}
 static bool sha256(const void *data,size_t size,uint8_t out[32])
 {
     size_t used=0;
@@ -350,8 +385,18 @@ static esp_err_t initialize_sessions(runtime_t *r)
     esp_err_t e=ls_manager_init(&r->sessions,configuration.gateway_id,configuration.boot,&owner,&guest);
     r->session_ready=e==ESP_OK;return e;
 }
-static esp_err_t initialize(runtime_t *r)
+static esp_err_t initialize(runtime_t *r,uint32_t provision_generation,bool *cancelled)
 {
+    if(provision_generation) {
+        bool paused=should_pause();
+        lock();provision_expire_locked(now_ms());
+        if(paused||pause_requested)provision_cancel_locked();
+        bool admitted=provision_job.generation==provision_generation&&provision_job.phase==LPP_ADMITTED;
+        *cancelled=provision_job.generation==provision_generation&&
+                   (provision_job.phase==LPP_EXPIRED||provision_job.phase==LPP_CANCELLED);
+        esp_err_t stopped=*cancelled?state.provision_result:ESP_ERR_INVALID_STATE;
+        unlock();if(!admitted)return stopped;
+    }
     esp_netif_t *ap=configuration.ap_netif(configuration.context);
     if(!ap)return ESP_ERR_INVALID_STATE;
     lgs_storage_t storage;wiz_io_t io;
@@ -369,22 +414,41 @@ static esp_err_t initialize(runtime_t *r)
         return error;
     }
     if(loaded==LGS_STORAGE_ABSENT) {
-        lock();bool provision=provision_pending;unlock();
-        if(!provision)return ESP_ERR_NOT_FOUND;
-        loaded=lgs_provision_trusted_admin(&r->service,pending_profiles);
+        lgs_profile_t *profiles=r->input.provisioning;
+        size_t profiles_size=sizeof(r->input.provisioning);
+        bool paused=should_pause(),claimed=false;
+        lock();
+        uint64_t claim_now=now_ms();
+        provision_expire_locked(claim_now);
+        if(paused||pause_requested)provision_cancel_locked();
+        if(provision_generation&&provision_pending&&
+           lpp_begin_commit(&provision_job,provision_generation,claim_now,profiles,profiles_size))claimed=true;
+        esp_err_t stopped=provision_job.generation==provision_generation?
+                          state.provision_result:ESP_ERR_INVALID_STATE;
+        *cancelled=provision_generation&&provision_job.generation==provision_generation&&
+                   (provision_job.phase==LPP_EXPIRED||provision_job.phase==LPP_CANCELLED);
+        unlock();
+        if(!claimed) {
+            lgs_secure_zero(profiles,profiles_size);
+            return stopped==ESP_ERR_NOT_FINISHED||stopped==ESP_OK?ESP_ERR_INVALID_STATE:stopped;
+        }
+        loaded=lgs_provision_trusted_admin(&r->service,profiles);
+        lgs_secure_zero(profiles,profiles_size);
         esp_err_t provision_result=loaded==LGS_STORAGE_OK?ESP_OK:
                                    loaded==LGS_STORAGE_MEMORY?ESP_ERR_NO_MEM:ESP_FAIL;
-        lock();provision_pending=false;state.provisioning=false;
-        state.provision_result=provision_result;
-        lgs_secure_zero(pending_profiles,sizeof(pending_profiles));unlock();
+        lock();
+        if(lpp_complete(&provision_job,provision_generation,loaded==LGS_STORAGE_OK)) {
+            provision_closed_locked(provision_result,loaded!=LGS_STORAGE_OK&&loaded!=LGS_STORAGE_MEMORY);
+            if(loaded==LGS_STORAGE_OK)state.configuration_present=true;
+        }
+        unlock();
         if(provision_result!=ESP_OK) {
             report_failure(LRT_FAILURE_PROVISION,loaded==LGS_STORAGE_MEMORY?LRT_REASON_ALLOCATION:LRT_REASON_STORAGE,provision_result,0,0);
             return provision_result;
         }
     } else {
         lock();
-        if(provision_pending){provision_pending=false;state.provisioning=false;state.provision_result=ESP_ERR_INVALID_STATE;
-            lgs_secure_zero(pending_profiles,sizeof(pending_profiles));}
+        if(provision_pending)provision_failed_locked(provision_generation,ESP_ERR_INVALID_STATE,false);
         unlock();
     }
     lock();state.configuration_present=true;unlock();
@@ -435,12 +499,13 @@ static void worker(void *unused)
     /* The creator reserves peak allocation before allocating this task. Other
      * notifications (such as quiesce) must not bypass release of that lease. */
     while(!worker_admitted)ulTaskNotifyTake(pdTRUE,pdMS_TO_TICKS(20));
-    esp_err_t error=ESP_ERR_NO_MEM;runtime_t *r=NULL;
+    lock();uint32_t provision_generation=worker_provision_generation;unlock();
+    esp_err_t error=ESP_ERR_NO_MEM;runtime_t *r=NULL;bool cancelled=false;
     if(peak_begin(LRT_PEAK_ACTIVATION,LRT_ACTIVATE_FREE,LRT_FAILURE_ACTIVATION_ADMISSION)) {
         r=calloc(1,sizeof(*r));
         if(r) {
             lrq_init(&r->relay,configuration.boot);
-            error=initialize(r);
+            error=initialize(r,provision_generation,&cancelled);
             if(error==ESP_OK&&!heap_at_least(LRT_RETAIN_FREE,LRT_LARGEST)) {
                 guard_result_t g=heap_snapshot(LRT_RETAIN_FREE,LRT_LARGEST);
                 g.reason=g.free_heap<LRT_RETAIN_FREE?LRT_REASON_FREE_HEAP:LRT_REASON_LARGEST_BLOCK;
@@ -455,8 +520,8 @@ static void worker(void *unused)
             lgs_nvs_close(&r->nvs);lgs_secure_zero(r,sizeof(*r));free(r);}
         sample_worker_stack(now_ms());
         lock();state.last_error=error;state.active=false;state.resource_blocked=error==ESP_ERR_NO_MEM;
-        if(error!=ESP_ERR_NO_MEM)state.storage_healthy=false;
-        if(provision_pending){state.provision_result=error;state.provisioning=false;provision_pending=false;lgs_secure_zero(pending_profiles,sizeof(pending_profiles));}
+        if(error!=ESP_ERR_NO_MEM&&!cancelled)state.storage_healthy=false;
+        if(provision_pending)provision_failed_locked(provision_generation,error,false);
         state.worker_running=false;task=NULL;
         if(error==ESP_ERR_NO_MEM&&state.configuration_present&&state.storage_healthy)lrr_failure(&recovery,now_ms());
         unlock();vTaskDelete(NULL);return;
@@ -506,14 +571,24 @@ static bool recovery_eligible_locked(void)
            !state.active&&!state.worker_running&&!task&&!runtime&&!state.provisioning&&!provision_pending&&
            !pause_requested&&state.resource_blocked&&state.last_error==ESP_ERR_NO_MEM;
 }
+static bool provision_eligible_locked(void)
+{
+    return !boot_gate.quarantined&&start_called&&state.prepared&&!state.configuration_present&&
+           state.storage_healthy&&!state.active&&!state.worker_running&&!task&&!runtime&&
+           state.provisioning&&provision_pending&&!pause_requested;
+}
+typedef enum { START_EXPLICIT=0, START_RECOVERY, START_PROVISION } start_reason_t;
 static bool admission_lock(bool automatic)
 {return xSemaphoreTake(mutex,automatic?0:portMAX_DELAY)==pdTRUE;}
-static esp_err_t create_worker(bool automatic,uint64_t requested_now)
+static esp_err_t create_worker(start_reason_t reason,uint64_t requested_now,uint32_t generation)
 {
+    bool automatic=reason!=START_EXPLICIT,provision=reason==START_PROVISION;
     if(!admission_lock(automatic))return ESP_ERR_TIMEOUT;
+    provision_expire_locked(now_ms());
     bool blocked=boot_gate.quarantined||pause_requested;
     bool exists=task!=NULL;
-    bool eligible=!automatic||lrr_due(&recovery,requested_now,recovery_eligible_locked());
+    bool eligible=provision?(provision_eligible_locked()&&lpp_due(&provision_job,generation,requested_now)):
+                  !automatic||lrr_due(&recovery,requested_now,recovery_eligible_locked());
     unlock();
     if(blocked)return ESP_ERR_INVALID_STATE;
     if(exists)return ESP_OK;
@@ -524,9 +599,11 @@ static esp_err_t create_worker(bool automatic,uint64_t requested_now)
     if(!peak_try(LRT_PEAK_ACTIVATION,LRT_ACTIVATE_FREE+LRT_STACK_BYTES+LRT_TASK_MARGIN,&g)) {
         esp_err_t refusal=ESP_ERR_NO_MEM;
         if(admission_lock(automatic)) {
+            uint64_t now=now_ms();provision_expire_locked(now);
             if(task)refusal=ESP_OK;
             else if(boot_gate.quarantined||pause_requested)refusal=ESP_ERR_INVALID_STATE;
-            else if(!automatic||lrr_take(&recovery,requested_now,recovery_eligible_locked())) {
+            else if(provision?(provision_eligible_locked()&&lpp_refused(&provision_job,generation,now)):
+                    !automatic||lrr_take(&recovery,requested_now,recovery_eligible_locked())) {
                 record_failure_locked(LRT_FAILURE_WORKER_ADMISSION,&g,ESP_ERR_NO_MEM);
                 state.resource_blocked=true;
                 if(state.configuration_present&&state.storage_healthy)lrr_failure(&recovery,now_ms());
@@ -537,14 +614,17 @@ static esp_err_t create_worker(bool automatic,uint64_t requested_now)
     }
     if(automatic&&should_pause()){peak_end(LRT_PEAK_ACTIVATION);return ESP_ERR_INVALID_STATE;}
     if(!admission_lock(automatic)){peak_end(LRT_PEAK_ACTIVATION);return ESP_ERR_TIMEOUT;}
+    uint64_t admitted_at=now_ms();provision_expire_locked(admitted_at);
     if(boot_gate.quarantined||pause_requested) {
         unlock();peak_end(LRT_PEAK_ACTIVATION);return ESP_ERR_INVALID_STATE;
     }
     if(task){unlock();peak_end(LRT_PEAK_ACTIVATION);return ESP_OK;}
-    if(automatic&&(pause_requested||!lrr_take(&recovery,requested_now,recovery_eligible_locked()))) {
+    if(provision?(!provision_eligible_locked()||!lpp_admit(&provision_job,generation,admitted_at)):
+       (automatic&&!lrr_take(&recovery,requested_now,recovery_eligible_locked()))) {
         unlock();peak_end(LRT_PEAK_ACTIVATION);return ESP_ERR_INVALID_STATE;
     }
     recovery.pending=false;recovery.next_ms=0;
+    worker_provision_generation=provision?generation:0;
     worker_admitted=false;
     state.worker_running=true;
     esp_err_t result=ESP_OK;
@@ -554,6 +634,7 @@ static esp_err_t create_worker(bool automatic,uint64_t requested_now)
         g.reason=LRT_REASON_ALLOCATION;
         record_failure_locked(LRT_FAILURE_WORKER_ALLOCATION,&g,ESP_ERR_NO_MEM);
         if(state.configuration_present&&state.storage_healthy)lrr_failure(&recovery,now_ms());
+        if(provision)provision_failed_locked(generation,ESP_ERR_NO_MEM,false);
         result=ESP_ERR_NO_MEM;
     }
     unlock();
@@ -606,7 +687,7 @@ esp_err_t lighting_runtime_start(void)
     bool configured=state.configuration_present;
     if(state.prepared)start_called=true;
     unlock();
-    return !valid?ESP_ERR_INVALID_STATE:!configured?ESP_OK:create_worker(false,now_ms());
+    return !valid?ESP_ERR_INVALID_STATE:!configured?ESP_OK:create_worker(START_EXPLICIT,now_ms(),0);
 }
 void lighting_runtime_status(lrt_status_t *out)
 {
@@ -614,13 +695,39 @@ void lighting_runtime_status(lrt_status_t *out)
     if(!mutex){memset(out,0,sizeof(*out));return;}
     lock();*out=state;out->quarantined=boot_gate.quarantined;
     out->quarantine_retry_used=boot_gate.retry_used;out->recovery_pending=recovery.pending;
+    out->provision_phase=provision_job.phase;out->provision_generation=provision_job.generation;
+    out->provision_deadline_ms=provision_job.deadline_ms;
+    uint64_t now=now_ms();out->provision_poller_ready=poll_seen&&now>=poll_at_ms&&now-poll_at_ms<=LRT_POLL_FRESH_MS;
     out->recovery_attempts=recovery.attempts;out->recovery_failures=recovery.failures;
     out->recovery_at_ms=recovery.next_ms;unlock();
     out->free_heap=(uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
     out->largest_block=(uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
 }
 void lighting_runtime_poll_recovery(uint64_t now)
-{if(mutex)(void)create_worker(true,now);}
+{
+    if(!mutex)return;
+    lighting_runtime_housekeeping(now);
+    if(!admission_lock(true))return;
+    poll_seen=true;poll_at_ms=now;
+    uint32_t generation=provision_job.generation;
+    bool provision=provision_eligible_locked()&&lpp_due(&provision_job,generation,now);
+    unlock();
+    (void)create_worker(provision?START_PROVISION:START_RECOVERY,now,provision?generation:0);
+}
+void lighting_runtime_housekeeping(uint64_t now)
+{
+    (void)now;
+    if(!mutex)return;
+    /* A prepared configuration is immutable; the callback only reads parent
+     * pause flags. Never take a peak lease or perform storage here. */
+    bool paused=should_pause();
+    if(!admission_lock(true))return;
+    /* A caller's sampled tick can precede a just-accepted job. Resample after
+     * acquiring the lock so that scheduling latency is not clock regression. */
+    provision_expire_locked(now_ms());
+    if(paused||pause_requested)provision_cancel_locked();
+    unlock();
+}
 esp_err_t lighting_runtime_provision_trusted_admin(const lgs_profile_t profiles[2])
 {
     if(!mutex||!profiles)return ESP_ERR_INVALID_ARG;
@@ -631,20 +738,22 @@ esp_err_t lighting_runtime_provision_trusted_admin(const lgs_profile_t profiles[
         if(!salt||!verifier)return ESP_ERR_INVALID_ARG;
     }
     lock();
-    if(!state.prepared||!state.storage_healthy||boot_gate.quarantined||pause_requested||
-       state.configuration_present||state.provisioning||task){unlock();return ESP_ERR_INVALID_STATE;}
+    if(!state.prepared||!start_called||!state.storage_healthy||boot_gate.quarantined||pause_requested||
+       state.configuration_present||state.provisioning||task||runtime){unlock();return ESP_ERR_INVALID_STATE;}
     unlock();
     if(should_pause())return ESP_ERR_INVALID_STATE;
     lock();
+    uint64_t accepted_at=now_ms();
+    provision_expire_locked(accepted_at);
     if(!state.storage_healthy||boot_gate.quarantined||pause_requested||
-       state.configuration_present||state.provisioning||task){unlock();return ESP_ERR_INVALID_STATE;}
-    memcpy(pending_profiles,profiles,sizeof(pending_profiles));provision_pending=true;
-    state.provisioning=true;state.provision_result=ESP_ERR_NOT_FINISHED;
-    unlock();
-    esp_err_t result=create_worker(false,now_ms());
-    lock();
-    if(result!=ESP_OK){provision_pending=false;state.provisioning=false;state.provision_result=result;lgs_secure_zero(pending_profiles,sizeof(pending_profiles));}
-    unlock();return result;
+       state.configuration_present||state.provisioning||task||runtime||!poll_seen||
+       accepted_at<poll_at_ms||accepted_at-poll_at_ms>LRT_POLL_FRESH_MS||
+       !lpp_enqueue(&provision_job,accepted_at,profiles,sizeof(lgs_profile_t)*2)) {
+        unlock();return ESP_ERR_INVALID_STATE;
+    }
+    provision_pending=true;
+    state.provisioning=true;state.provision_result=ESP_ERR_NOT_FINISHED;state.provision_outcome_unknown=false;
+    unlock();return ESP_OK;
 }
 esp_err_t lighting_runtime_retry_trusted_admin(void)
 {
@@ -659,7 +768,7 @@ esp_err_t lighting_runtime_retry_trusted_admin(void)
     bool configured=state.configuration_present;
     unlock();
     if(!configured)return ESP_OK;
-    esp_err_t result=create_worker(false,now_ms());
+    esp_err_t result=create_worker(START_EXPLICIT,now_ms(),0);
     if(result==ESP_OK||result==ESP_ERR_NO_MEM)return ESP_OK;
     /* A quiesce can race the first eligibility snapshot. Do not consume the
      * administrator's retry when no worker was admitted. */
@@ -686,9 +795,9 @@ bool lighting_runtime_quiesce(uint32_t timeout_ms)
     if(timeout_ms>7000)return false;
     pause_requested=true;
     if(!mutex)return true;
-    lock();notify_locked();bool absent=task==NULL;unlock();if(absent)return true;
+    lock();provision_cancel_locked();notify_locked();bool absent=task==NULL;unlock();if(absent)return true;
     uint64_t deadline=now_ms()+timeout_ms;
-    do {lrt_status_t snapshot;lighting_runtime_status(&snapshot);if(snapshot.quiesced)return true;
+    do {lock();bool stopped=task==NULL||state.quiesced;unlock();if(stopped)return true;
         vTaskDelay(pdMS_TO_TICKS(20));}while(now_ms()<deadline);
     return false;
 }

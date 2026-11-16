@@ -765,9 +765,12 @@ def cmd_monitor(args):
 
 def cmd_soak(args):
     from soak import SoakWindow, http_sample
+    lighting = getattr(args, "lighting", False)
+    if args.serial and lighting:
+        raise ValueError("--lighting requires HTTPS telemetry; it cannot be combined with --serial")
     if not 1 <= args.minutes <= 1440:
         raise ValueError("Choose a soak duration between 1 and 1440 minutes")
-    window = SoakWindow(args.minutes * 60, replay=args.replay, min_loops=args.min_loops)
+    window = SoakWindow(args.minutes * 60, replay=args.replay, min_loops=args.min_loops, lighting=lighting)
     output = Path(args.output)
     def save(**kwargs):
         report = window.report(**kwargs)
@@ -804,7 +807,10 @@ def cmd_soak(args):
             device.login()
             renewed = time.monotonic()
             while True:
-                if observe(http_sample(device.request("GET", "/api/v1/status"))):
+                sample = http_sample(device.request("GET", "/api/v1/status"))
+                if lighting:
+                    sample["lighting"] = device.request("GET", "/api/v1/lights")
+                if observe(sample):
                     break
                 if time.monotonic() - renewed >= 2400:
                     # Password verification is intentionally expensive on the MCU.
@@ -957,6 +963,7 @@ def main():
             p.add_argument("--prerelease", action="store_true", help="Publish a qualification candidate excluded from automatic stable checks")
         if name == "soak":
             p.add_argument("--serial", action="store_true", help="Collect USB health telemetry while retaining the host Internet connection")
+            p.add_argument("--lighting", action="store_true", help="Also require healthy configured lighting runtime on every HTTPS sample")
             p.add_argument("--minutes", type=int, default=60)
             p.add_argument("--replay", action="store_true", help="Require continuous built-in replay")
             p.add_argument("--min-loops", type=int, default=0, help="Require this many observed replay loop boundaries")

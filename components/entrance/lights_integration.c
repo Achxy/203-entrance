@@ -104,6 +104,10 @@ void lights_poll_recovery(uint64_t now_ms)
 {
     lighting_runtime_poll_recovery(now_ms);
 }
+void lights_housekeeping(uint64_t now_ms)
+{
+    lighting_runtime_housekeeping(now_ms);
+}
 bool lights_quiesce(void)
 {
     if (!pause_mutex) return true;
@@ -252,6 +256,12 @@ cJSON *lights_status(void)
     cJSON_AddNumberToObject(j, "required_free_heap", s.required_free_heap);
     cJSON_AddNumberToObject(j, "required_largest_block", s.required_largest_block);
     cJSON_AddNumberToObject(j, "provision_result", s.provision_result);
+    cJSON_AddStringToObject(j, "provision_phase", lpp_phase_name(s.provision_phase));
+    cJSON_AddStringToObject(j, "provision_boot", arcade_boot_id());
+    cJSON_AddNumberToObject(j, "provision_generation", s.provision_generation);
+    cJSON_AddNumberToObject(j, "provision_deadline_ms", (double)s.provision_deadline_ms);
+    cJSON_AddBoolToObject(j, "provision_outcome_unknown", s.provision_outcome_unknown);
+    cJSON_AddBoolToObject(j, "provision_poller_ready", s.provision_poller_ready);
     cJSON_AddNumberToObject(j, "last_error", s.last_error);
     cJSON_AddNumberToObject(j, "sessions", s.secure_sessions);
     cJSON_AddNumberToObject(j, "free_heap", s.free_heap);
@@ -313,6 +323,7 @@ int __wrap_esp_tls_conn_new_sync(const char *host, int size, int port,
 #else
 esp_err_t lights_prepare(void) { return ESP_OK; }
 void lights_poll_recovery(uint64_t now_ms) { (void)now_ms; }
+void lights_housekeeping(uint64_t now_ms) { (void)now_ms; }
 esp_err_t lights_start(void) { return ESP_OK; }
 bool lights_quiesce(void) { return true; }
 void lights_resume(void) {}

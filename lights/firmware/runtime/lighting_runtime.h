@@ -3,6 +3,7 @@
 
 #include "gateway_record.h"
 #include "lighting_runtime_queue.h"
+#include "lighting_runtime_provision.h"
 #include "lighting_local_time.h"
 #include "esp_err.h"
 #include "esp_netif.h"
@@ -51,6 +52,10 @@ typedef struct {
     bool quiesced, storage_healthy, resource_blocked, worker_running;
     bool quarantined, quarantine_retry_used;
     int reset_reason;
+    lpp_phase_t provision_phase;
+    uint32_t provision_generation;
+    uint64_t provision_deadline_ms;
+    bool provision_outcome_unknown, provision_poller_ready;
     esp_err_t provision_result, last_error;
     uint32_t completed, rejected;
     unsigned secure_sessions;
@@ -76,12 +81,16 @@ void lighting_runtime_status(lrt_status_t *out);
 /* Existing parent loop, even offline/disabled. No new task/timer for retry
  * scheduling. Admission uses nonblocking locks and preserves the heap guards. */
 void lighting_runtime_poll_recovery(uint64_t now_ms);
+/* Lightweight expiry only, from an existing health tick. Nonblocking; no NVS,
+ * network, allocation or task creation. Expired pre-commit credentials are wiped. */
+void lighting_runtime_housekeeping(uint64_t now_ms);
 const char *lighting_runtime_failure_stage_name(lrt_failure_stage_t stage);
 const char *lighting_runtime_failure_reason_name(lrt_failure_reason_t reason);
 
-/* Existing authenticated management/USB adapter ONLY. Returns acceptance of
- * asynchronous provisioning, not durable success. Poll status.provisioning and
- * provision_result. All persistence/service mutation occurs on the worker. */
+/* Existing authenticated management/USB adapter ONLY. Queues one immutable
+ * profile pair for at most30 seconds before commit admission. Close management
+ * TLS after acceptance. Poll the same boot/generation's phase/result; acceptance
+ * is not durable success. All persistence/service mutation occurs on the worker. */
 esp_err_t lighting_runtime_provision_trusted_admin(const lgs_profile_t profiles[2]);
 /* Existing authenticated local management adapter ONLY. Releases abnormal-reset
  * quarantine once for this boot; it never changes credentials. ESP_OK accepts

@@ -18,7 +18,10 @@ the candidate feature flag. No hardware qualification is implied by a build.
    worker; that worker validates and loads the actual record before admission.
 3. Only an already authenticated management/USB owner path may call
    `lighting_runtime_provision_trusted_admin(profiles)`. It copies two SRP
-   salt/verifier profiles into a bounded pending slot and starts the worker.
+   salt/verifier profiles into one bounded pending slot, with a fixed30-second
+   deadline and a boot-scoped generation. It does not create a worker in the
+   management TLS request. The client closes TLS so the existing relay poll can
+   admit the worker after the first one-second quiet interval.
    The function returning success means **queued**, not durable success.
    Return HTTP202 and poll `provisioning` / `provision_result` if exposing this
    through the management API. Existing credentials are not overwritten.
@@ -39,6 +42,61 @@ the candidate feature flag. No hardware qualification is implied by a build.
    pending provisioning prevent admission. There is no new scheduling task,
    timer, credential replacement, state erase or reboot. Uncommitted pending
    credentials are wiped on failure and require another trusted provision call.
+
+## Deferred trusted provisioning
+
+The existing authenticated management POST still returns202, meaning accepted
+into RAM only. It requires healthy storage, no committed lighting record, no
+other pending request/worker, no abnormal-reset quarantine or OTA/release pause,
+and a recovery poll observed within five seconds. Duplicate or replacement
+POSTs return409; they do not replace profiles or extend the deadline. Generation
+exhaustion fails closed. A reboot discards uncommitted RAM authorization.
+
+The pending store owns exactly800 profile bytes plus bounded metadata. Once per
+second, the existing relay poll may attempt the unchanged107KiB pre-task gate;
+the worker still rechecks96KiB before allocating its context. Peak contention,
+low heap and fragmentation leave the same request queued until its original
+deadline. Once a worker is admitted, a failure before commit ends that request,
+wipes the shared profiles and requires a new explicit admin call. This interval is
+separate from the30–300-second recovery of an already committed configuration.
+
+`lighting_runtime_housekeeping` must run from the existing health tick as well
+as the relay poll. It takes the runtime mutex only with a zero timeout, performs
+no allocation/NVS/network operation, and wipes a queued or admitted request at
+expiry or cancellation. This is necessary because relay DNS/connect can block.
+Wiping occurs at the next scheduled health tick that acquires the short mutex;
+the worker independently rejects late admission/commit even before that tick.
+The current250ms health cadence is not a real-time guarantee during a stalled
+CPU. OTA quiescence also cancels directly and waits for an admitted worker to
+finish cleanup; disappearance after an initialization failure counts as stopped.
+
+After checking storage and loading any existing record, the worker checks the
+same generation, current monotonic deadline and pause state under the mutex.
+Commit admission atomically
+copies profiles into its private800-byte workspace and wipes the shared slot.
+This reuses the existing input union before the runtime is published or any BLE
+work starts; a static assertion prevents growing that union. NVS receives only
+that private copy. The worker wipes it on return; expiry and
+quiesce never erase a buffer another task is reading. The30-second deadline is
+the last admission to the COW transaction, not a claim that a flash operation
+can be interrupted or finish by that instant. An already admitted transaction
+finishes and reports its real outcome before OTA can proceed.
+
+Status exposes `provision_boot`, `provision_generation`, `provision_deadline_ms`,
+`provision_poller_ready` and `provision_phase` (`queued`, `admitted`, `committing`,
+`committed`, `failed`, `expired`, `cancelled`, or initial `idle`). A committed
+record immediately sets `configured`, even if later runtime/BLE admission fails.
+`provision_outcome_unknown` marks a failed storage transaction whose durable
+outcome cannot be safely inferred; storage then fails closed, with no automatic
+overwrite, erase or retry. Cancellation/expiry alone do not mark storage corrupt.
+
+The access CLI closes TLS after POST acceptance, waits four seconds, and performs
+short status reads with closed connections and five-second gaps. It correlates
+the same boot/generation, never replays the POST, and preserves its owner bundle.
+Read transport errors may be retried within a fixed35-second observation window;
+that extra observation time cannot renew the server's30-second authorization.
+Lost acceptance, a reboot/replacement, uncertain storage or observation timeout
+is reported as unresolved rather than successful provisioning.
 
 ## Abnormal-reset containment
 

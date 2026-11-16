@@ -13,25 +13,24 @@
 #include <strings.h>
 #include <stdlib.h>
 #include <time.h>
+#if ENTRANCE_LIGHTS
+#include "relay_ingress.h"
+#include "esp_heap_caps.h"
+#endif
 
 typedef struct {
     uint32_t version;
     uint8_t enabled;
     char host[128];
 } relay_config_t;
-typedef struct {
 #if ENTRANCE_LIGHTS
-    char text[RELAY_INPUT_MAX + 1];
-    size_t length;
+typedef relay_ingress_item_t relay_message_t;
+_Static_assert(RELAY_INGRESS_MAX == RELAY_INPUT_MAX, "relay ingress frame limit");
 #else
+typedef struct {
     size_t length;
     char text[RELAY_INPUT_MAX + 1];
-#endif
 } relay_message_t;
-#if ENTRANCE_LIGHTS
-_Static_assert(offsetof(relay_message_t, text) == offsetof(relay_frame_t, bytes), "message text prefix");
-_Static_assert(offsetof(relay_message_t, length) == offsetof(relay_frame_t, used), "message size prefix");
-_Static_assert(sizeof(relay_message_t) == offsetof(relay_frame_t, frame_start), "complete message prefix");
 #endif
 static relay_config_t config;
 static SemaphoreHandle_t mutex;
@@ -47,7 +46,65 @@ static _Atomic int last_tls_error, last_tls_stack_error, last_tls_flags, last_ht
     last_socket_error;
 static uint64_t change_at;
 static relay_frame_t frame;
-#if !ENTRANCE_LIGHTS
+#if ENTRANCE_LIGHTS
+static relay_ingress_t ingress;
+static portMUX_TYPE ingress_mux = portMUX_INITIALIZER_UNLOCKED;
+static _Atomic uint32_t ingress_refused, ingress_peak_refused, ingress_memory_refused,
+    ingress_capacity_refused;
+static void ingress_lock(void *ctx)
+{
+    (void)ctx;
+    portENTER_CRITICAL(&ingress_mux);
+}
+static void ingress_unlock(void *ctx)
+{
+    (void)ctx;
+    portEXIT_CRITICAL(&ingress_mux);
+}
+static relay_ingress_result_t ingress_begin_large(size_t bytes, void *ctx)
+{
+    (void)ctx;
+    if (!lights_peak_begin())
+        return RELAY_INGRESS_PEAK_BUSY;
+    if (!relay_ingress_heap_admits(bytes,
+            heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+            heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT))) {
+        lights_peak_end();
+        return RELAY_INGRESS_HEAP_GUARD;
+    }
+    return RELAY_INGRESS_OK;
+}
+static void ingress_end_large(void *ctx)
+{
+    (void)ctx;
+    lights_peak_end();
+}
+static void *ingress_allocate(size_t bytes, void *ctx)
+{
+    (void)ctx;
+    return heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+static void ingress_deallocate(void *memory, void *ctx)
+{
+    (void)ctx;
+    heap_caps_free(memory);
+}
+static bool ingress_enqueue(const relay_ingress_item_t *item, void *ctx)
+{
+    (void)ctx;
+    return xQueueSend(incoming, item, 0) == pdTRUE;
+}
+static bool ingress_dequeue(relay_ingress_item_t *item, void *ctx)
+{
+    (void)ctx;
+    return xQueueReceive(incoming, item, 0) == pdTRUE;
+}
+static const relay_ingress_ops_t ingress_ops = {
+    .lock = ingress_lock, .unlock = ingress_unlock,
+    .begin_large = ingress_begin_large, .end_large = ingress_end_large,
+    .allocate = ingress_allocate, .deallocate = ingress_deallocate,
+    .enqueue = ingress_enqueue, .dequeue = ingress_dequeue};
+#else
 static relay_message_t assembled;
 #endif
 static uint64_t milliseconds(void)
@@ -196,17 +253,34 @@ static void event(void *arg, esp_event_base_t base, int32_t id, void *event_data
     }
     if (done == 1) {
 #if ENTRANCE_LIGHTS
-        /* FreeRTOS copies the completed prefix before the next fragment can
-           reuse it; every queued message still owns its complete payload. */
-        if (xQueueSend(incoming, &frame, 0) != pdTRUE) {
+        relay_ingress_result_t result = relay_ingress_submit(&ingress, &ingress_ops,
+                                                             frame.bytes, frame.used);
+        if (result != RELAY_INGRESS_OK) {
+            rejected++;
+            if (result == RELAY_INGRESS_INVALID) {
+                fatal = true;
+                return;
+            }
+            /* Refuse this whole message without dropping the shared game
+               socket. Its caller's existing deadline ends the request/session;
+               ciphertext is never replayed after uncertain delivery. */
+            ingress_refused++;
+            if (result == RELAY_INGRESS_PEAK_BUSY)
+                ingress_peak_refused++;
+            else if (result == RELAY_INGRESS_HEAP_GUARD ||
+                     result == RELAY_INGRESS_ALLOCATION_FAILED)
+                ingress_memory_refused++;
+            else
+                ingress_capacity_refused++;
+        }
 #else
         assembled.length = frame.used;
         memcpy(assembled.text, frame.bytes, frame.used + 1);
         if (xQueueSend(incoming, &assembled, 0) != pdTRUE) {
-#endif
             fatal = true;
             rejected++;
         }
+#endif
     }
 }
 static const char *text(const cJSON *j, const char *key, size_t max)
@@ -330,12 +404,17 @@ static void task(void *arg)
     char client_host[sizeof(config.host)] = {0};
     unsigned failures = 0;
     uint64_t next = 0, started = 0, pulse = 0, public_at = 0;
+#if ENTRANCE_LIGHTS
+    relay_message_t owned = {0};
+    relay_message_t *msg = &owned;
+#else
     relay_message_t *msg = malloc(sizeof(*msg));
     if (!msg) {
         phase = 8;
         vTaskDelete(NULL);
         return;
     }
+#endif
     for (;;) {
         uint64_t now = milliseconds();
         lights_poll_recovery(now);
@@ -359,6 +438,10 @@ static void task(void *arg)
             relay_transport_destroy();
             client = NULL;
             client_live = false;
+#if ENTRANCE_LIGHTS
+            /* The SDK has stopped its event producer before payload disposal. */
+            relay_ingress_drain(&ingress, &ingress_ops);
+#endif
             xQueueReset(incoming);
             memset(&frame, 0, sizeof(frame));
             disconnects++;
@@ -456,6 +539,9 @@ static void task(void *arg)
                 fatal = true;
                 rejected++;
             }
+#if ENTRANCE_LIGHTS
+            relay_ingress_release(&ingress, &ingress_ops, msg);
+#endif
         }
         if (client && authenticated && !fatal && now >= pulse) {
             cJSON *j = cJSON_CreateObject();
@@ -491,12 +577,28 @@ esp_err_t relay_start(void)
 {
     if (!storage_ready)
         return ESP_ERR_INVALID_STATE;
+#if ENTRANCE_LIGHTS
+    if (incoming)
+        return ESP_ERR_INVALID_STATE;
+    relay_ingress_init(&ingress);
+    incoming = xQueueCreate(RELAY_INGRESS_QUEUE_DEPTH, sizeof(relay_message_t));
+#else
     incoming = xQueueCreate(4, sizeof(relay_message_t));
+#endif
     if (!incoming)
         return ESP_ERR_NO_MEM;
+#if ENTRANCE_LIGHTS
+    if (xTaskCreate(task, "arcade_relay", 8192, NULL, tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
+        vQueueDelete(incoming);
+        incoming = NULL;
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+#else
     return xTaskCreate(task, "arcade_relay", 8192, NULL, tskIDLE_PRIORITY + 1, NULL) == pdPASS
                ? ESP_OK
                : ESP_ERR_NO_MEM;
+#endif
 }
 cJSON *relay_status(void)
 {
@@ -512,6 +614,12 @@ cJSON *relay_status(void)
     cJSON_AddNumberToObject(j, "connections", connects);
     cJSON_AddNumberToObject(j, "disconnects", disconnects);
     cJSON_AddNumberToObject(j, "rejected_messages", rejected);
+#if ENTRANCE_LIGHTS
+    cJSON_AddNumberToObject(j, "ingress_refused", ingress_refused);
+    cJSON_AddNumberToObject(j, "ingress_peak_refused", ingress_peak_refused);
+    cJSON_AddNumberToObject(j, "ingress_memory_refused", ingress_memory_refused);
+    cJSON_AddNumberToObject(j, "ingress_capacity_refused", ingress_capacity_refused);
+#endif
     cJSON_AddNumberToObject(j, "last_tls_error", last_tls_error);
     cJSON_AddNumberToObject(j, "last_tls_stack_error", last_tls_stack_error);
     cJSON_AddNumberToObject(j, "last_tls_flags", last_tls_flags);

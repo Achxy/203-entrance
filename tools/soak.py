@@ -2,17 +2,79 @@
 import statistics
 
 
+_LIGHTING_TRUE = ("compiled", "configured", "active", "bluetooth", "storage_healthy",
+                  "worker_running", "worker_stack_sample_valid")
+_LIGHTING_FALSE = ("provisioning", "paused", "quarantined", "resource_blocked")
+_LIGHTING_METRICS = ("worker_stack_min_free_bytes", "free_heap", "largest_block")
+_LIGHTING_TIME_COUNTERS = ("dns_replies", "ntp_replies", "malformed", "foreign_peer",
+                           "rate_limited", "clock_refused", "io_errors")
+_LIGHTING_TIME_STATES = {"off", "waiting_ap", "socket_budget_refused",
+                         "dns_configuration_refused", "bind_failed", "waiting_trusted_clock", "ready"}
+
+
+def _unsigned(value):
+    return value if type(value) is int and 0 <= value <= 0xffffffff else None
+
+
+def lighting_sample(status):
+    """Keep only typed runtime telemetry; never serialize credentials or unknown fields."""
+    status = status if type(status) is dict else {}
+    result = {key: status[key] if type(status.get(key)) is bool else None
+              for key in _LIGHTING_TRUE + _LIGHTING_FALSE}
+    result.update({key: _unsigned(status.get(key)) for key in _LIGHTING_METRICS})
+    provision = status.get("provision_result")
+    result["provision_result"] = provision if type(provision) is int and -0x80000000 <= provision <= 0xffffffff else None
+    for key in ("sessions", "completed"):
+        if key in status:
+            result[key] = _unsigned(status[key])
+    clock = status.get("local_time")
+    clock = clock if type(clock) is dict else {}
+    state = clock.get("state")
+    result["local_time"] = {"state": state if type(state) is str and state in _LIGHTING_TIME_STATES else None}
+    result["local_time"].update({key: _unsigned(clock.get(key)) for key in _LIGHTING_TIME_COUNTERS})
+    return result
+
+
+def _lighting_healthy(sample):
+    for key in _LIGHTING_TRUE:
+        if sample[key] is not True:
+            raise ValueError(f"Lighting {key} is not true during soak")
+    for key in _LIGHTING_FALSE:
+        if sample[key] is not False:
+            raise ValueError(f"Lighting {key} is not false during soak")
+    if sample["provision_result"] != 0:
+        raise ValueError("Lighting credentials/provisioning are not valid")
+    for key in _LIGHTING_METRICS + ("sessions", "completed"):
+        if key in sample and sample[key] is None:
+            raise ValueError(f"Invalid lighting {key} telemetry")
+    if any(value is None for value in sample["local_time"].values()):
+        raise ValueError("Invalid lighting local_time telemetry")
+
+
 class SoakWindow:
-    def __init__(self, seconds, *, replay=False, min_loops=0):
+    def __init__(self, seconds, *, replay=False, min_loops=0, lighting=False):
         if seconds <= 0 or min_loops < 0:
             raise ValueError("Soak duration must be positive and minimum loops nonnegative")
         self.required = seconds
         self.replay = replay or min_loops > 0
         self.min_loops = min_loops
+        self.lighting = lighting
         self.rows = []
         self.start = self.last = None
+        self.failed_sample = None
 
     def observe(self, sample, now):
+        if not self.lighting:
+            return self._observe(sample, now)
+        sample = dict(sample, lighting=lighting_sample(sample.get("lighting")))
+        try:
+            _lighting_healthy(sample["lighting"])
+            return self._observe(sample, now)
+        except (ValueError, KeyError, TypeError):
+            self.failed_sample = dict(sample, elapsed_s=round(now - self.start, 3) if self.start is not None else 0)
+            raise
+
+    def _observe(self, sample, now):
         uptime = sample.get("uptime_ms")
         if type(uptime) is not int or uptime < 0:
             raise ValueError("Invalid health uptime")
@@ -49,6 +111,19 @@ class SoakWindow:
     def report(self, *, complete=False, error=None):
         report = {"required_s": self.required, "duration_s": self.rows[-1]["elapsed_s"] if self.rows else 0,
                   "samples": self.rows, "passed": False, "errors": [error] if error else []}
+        if self.lighting:
+            observed = self.rows + ([self.failed_sample] if self.failed_sample is not None else [])
+            report["lighting"] = {"required": True, "observed_samples": len(observed)}
+            for source, destination in (("worker_stack_min_free_bytes", "minimum_worker_stack_free_bytes"),
+                                         ("free_heap", "minimum_free_heap"),
+                                         ("largest_block", "minimum_largest_block")):
+                values = [r["lighting"][source] for r in observed if r["lighting"][source] is not None and
+                          (source != "worker_stack_min_free_bytes" or r["lighting"]["worker_stack_sample_valid"] is True)]
+                report["lighting"][destination] = min(values) if values else None
+            if self.failed_sample is not None:
+                report["failed_sample"] = self.failed_sample
+                if not report["errors"]:
+                    report["errors"].append("A lighting soak sample failed validation")
         if not complete:
             return report
         if (not self.rows or report["duration_s"] < self.required or

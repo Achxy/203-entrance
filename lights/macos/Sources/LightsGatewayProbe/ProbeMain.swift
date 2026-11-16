@@ -6,8 +6,8 @@ import Darwin
         do {
             switch try ProbeOptions.parse(Array(CommandLine.arguments.dropFirst())) {
             case .help: print(ProbeOptions.usage)
-            case .check: try ProbeChecks.run()
-            case .live(let options): exit(await ReadOnlyGatewayProbe.run(options))
+            case .check: try await ProbeChecks.run()
+            case .live(let options), .authorize(let options), .discover(let options): exit(await ReadOnlyGatewayProbe.run(options))
             }
         } catch {
             FileHandle.standardError.write(Data("Probe input rejected. Use --help; no live connection was attempted.\n".utf8))

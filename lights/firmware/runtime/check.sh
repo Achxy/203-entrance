@@ -13,6 +13,9 @@ trap 'rm -rf "$out"' EXIT HUP INT TERM
   -fsanitize=address,undefined -I. lighting_runtime_recovery.c tests/test_boot.c -o "$out/boot"
 "$out/boot"
 "${CC:-cc}" -std=c11 -Wall -Wextra -Wconversion -Werror -g \
+  -fsanitize=address,undefined -I. lighting_runtime_provision.c tests/test_provision.c -o "$out/provision"
+"$out/provision"
+"${CC:-cc}" -std=c11 -Wall -Wextra -Wconversion -Werror -g \
   -fsanitize=address,undefined -I. lighting_local_time.c tests/test_local_time.c -o "$out/local-time"
 "$out/local-time"
 for sockets in 20 16; do

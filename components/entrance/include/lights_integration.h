@@ -5,6 +5,7 @@
 esp_err_t lights_prepare(void);
 esp_err_t lights_start(void);
 void lights_poll_recovery(uint64_t now_ms);
+void lights_housekeeping(uint64_t now_ms);
 bool lights_quiesce(void);
 void lights_resume(void);
 bool lights_peak_begin(void);

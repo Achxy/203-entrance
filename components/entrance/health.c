@@ -1,6 +1,7 @@
 #include "entrance.h"
 #include "display.h"
 #include "arcade.h"
+#include "lights_integration.h"
 #include "esp_task_wdt.h"
 #include "esp_timer.h"
 #include "esp_system.h"
@@ -41,6 +42,9 @@ static void health_task(void *arg)
         ota_tick(healthy);
         diag_health_sample(healthy);
         int64_t now = esp_timer_get_time();
+#if ENTRANCE_LIGHTS
+        lights_housekeeping((uint64_t)now / 1000u);
+#endif
         if (now >= telemetry_at) {
             telemetry_at = now + 15000000;
             ESP_LOGI("health",

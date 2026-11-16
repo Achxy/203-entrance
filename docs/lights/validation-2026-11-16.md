@@ -1,9 +1,11 @@
 # 203 Lights development validation — 16 November 2026
 
 The web interface and relay readiness endpoint are published. The native app and
-ESP32 lighting implementation are development candidates. **Lighting has not
-been installed or provisioned on the production display, and no physical bulb
-has been paired, reset or controlled by this implementation.**
+ESP32 lighting implementation remain development candidates. **Signed RC16 is
+installed and boot-confirmed on the production display, but lighting provisioning
+was safely refused for insufficient memory. No lighting credentials were
+committed and no physical bulb has been paired, reset or controlled by this
+implementation.**
 
 ## Live services
 
@@ -17,7 +19,7 @@ has been paired, reset or controlled by this implementation.**
 | Existing display relay | `/v1/status` still returned `online:true` after relay deployment |
 
 The lighting offline indicator does not mean the existing display is offline.
-It reflects the uninstalled/unprovisioned lighting service. Enabling the relay
+It reflects the unprovisioned lighting service. Enabling the relay
 flag alone cannot provide authenticated lighting control.
 
 The owner confirmed that WiZ currently allows all local controls and explicitly
@@ -34,7 +36,7 @@ The private header evidence is `.local/lights-ui/site-v3-header-evidence.json`.
 
 ## Host and build evidence
 
-- The full existing repository regression suite passed **96 tests**, including
+- The full existing repository regression suite passed **98 tests**, including
   OTA, image/manifest policy, settings, USB hub, display and game regressions.
 - The memory-sharing display harness passed **19,154 complete SPI-frame
   captures**, including every built-in animation frame, orientations, captions,
@@ -48,7 +50,7 @@ The private header evidence is `.local/lights-ui/site-v3-header-evidence.json`.
   and leading-zero SRP cases. Chrome desktop/mobile layout, disabled controls,
   overflow and failure presentation were inspected. This is not iPhone/Safari
   or ESP32 interoperability proof.
-- The native live-diagnostics command passed **53 offline assertions** for
+- The native live-diagnostics command initially passed **53 offline assertions** for
   private-file handling, fixed gateway identity, bounded execution and sanitized
   evidence. Its default invocation is inert; the actual gateway remains untested
   until an explicit live run succeeds.
@@ -59,7 +61,7 @@ The private header evidence is `.local/lights-ui/site-v3-header-evidence.json`.
   remains unverified. Fourteen
   NSHostingView captures cover light/dark and ready, disconnected, frozen,
   partial and long-name states. Native CUA attachment timed out, including a fresh full-path retry; interactive
-  menu behavior, real Keychain access, permission dialogs and VoiceOver remain
+  menu behavior, real Keychain access and VoiceOver remain
   unverified. See [native validation](../../lights/macos/VALIDATION.md).
 - The isolated default-off firmware regression build retained the RC15 signed
   size of **1,314,816 bytes** and static RAM of **164,362 bytes**. The production
@@ -106,7 +108,8 @@ The WiZ development export and generated owner recovery bundle are separate,
 ignored private files under `.local/lights/`, with private filesystem modes.
 No home key, owner key or guest password is bundled in the app/site. A scan of
 607 tracked/unignored source files found zero matches for those actual private
-credentials. No production lighting provisioning request was sent.
+credentials. The later first provisioning attempt and its safe refusal are
+recorded below.
 
 The Mac's Wi-Fi, routes and network configuration were not changed. The spare
 remained a maintenance hub; it was not converted into the lighting gateway.
@@ -136,6 +139,111 @@ authenticated HTTPS reads verified RC15, healthy settings, and advancing slot-2
 animation: rendered frames increased from 112,061 to 112,547 and loops from
 2,924 to 2,937. The public display relay independently returned `online:true`.
 The private before/after record is `.local/lights/production-post-hub.json`.
+
+### Baseline monitor interruption
+
+The fresh RC15 host-monitored soak **failed**, with 148 accepted samples over
+2,399 seconds, because the monitor exceeded its 45-second telemetry-gap limit
+while renewing its management session. The retained failed report is
+`.local/lights/rc15-baseline-soak.json`; it is not a completed 60-minute gate.
+A separate diagnostic measured password verification at 33.295 seconds and a
+status request at 1.284 seconds. The CLI had added its normal 15-second sleep
+before renewal. It now samples immediately before and after renewal, without
+relaxing authentication or the gap limit. Two command-level clock/device tests
+verify that a 33-second renewal completes a simulated hour, while a 46-second
+renewal still fails and preserves its evidence.
+
+The board's independent 64-entry, one-minute health history covered 3,782
+seconds on the same boot, with zero unhealthy observations and settings
+generation 8 throughout. This is separate, lower-frequency evidence; it does
+not establish uninterrupted animation or replace the failed host gate. Its
+heap samples span periods both with and without an open management connection,
+so their first/last medians are not a controlled heap-leak measurement. The
+private diagnostic is `.local/lights/rc15-monitor-gap-diagnostic.json`.
+
+### RC16 installed; first provisioning refused safely
+
+The isolated hardware candidate was built from clean commit
+`54bdb752c6e5c6d805647809461a839241fccfc7`, using the existing production key.
+Its signed image is 1,708,032 bytes, SHA-256
+`5d3ee49dc711360821b9dd74cd1bf160146da2bfd773cb7e9287b3a9e745ee8c`,
+with 258,048 bytes of slot headroom. The independent signature-sector audit
+found exactly one matching RSA-3072 signature block and erased unused space.
+Static RAM is 129,269 bytes; the lazily allocated runtime is 22,120 bytes.
+See the [resource audit](resource-budget.md) for link-time versus runtime limits.
+
+The upload through the spare hub completed and the candidate passed its normal
+healthy trial/reconnection confirmation. RC15 remained the available rollback
+target. No Mac Wi-Fi or network setting changed. The private installation log
+is `.local/lights/rc16-install.log`; build provenance and artifacts are under
+`.local/lights-hardware/0.3.0-rc.16/`. Build provenance describes the artifact
+at creation, so its original `flashed: false` field is not a current device-status
+record and has not been rewritten.
+
+After initial transient post-reboot connection refusals, authenticated reads
+verified the expected version, healthy settings and slot-2 replay. Rendered
+frames advanced by 2,048 and loop count by 55 over 163,309 ms. Captions retained
+their 1,350 ms period and landscape dimensions remained 160 × 128. Onboard
+minute samples during the quiet interval reported 110,128 and 110,160 bytes
+free, with a 94,208-byte largest block. These are point measurements, not a
+completed soak or loaded-lighting performance qualification. The private
+record is `.local/lights/rc16-first-boot.json`.
+
+The first zero-bulb provisioning request returned HTTP 409 / `ESP_ERR_NO_MEM`.
+Its worker-admission snapshot measured **103,908 bytes free**, below the
+unchanged **109,568-byte** requirement; the 94,208-byte largest block exceeded
+its 24,576-byte requirement. The worker was never started, configuration remained
+absent, provisioning was no longer pending, and storage remained healthy.
+No automatic retry was armed for the uncommitted request. A subsequent read
+still showed advancing animation (5,215 frames / 138 loops at uptime 419,597 ms)
+and a lifetime minimum heap of 77,968 bytes. Evidence is in
+`.local/lights/rc16-provision-attempt.log` and
+`.local/lights/rc16-provision-refusal.json`.
+
+This result motivates bounded deferred provisioning after the initiating TLS
+connection closes and further measured memory savings. It does not justify
+lowering the allocation or health guards, and activation alone would not prove
+that both SRP handshake steps have sufficient memory.
+
+### Follow-up candidate checks
+
+The deferred provisioning implementation accepts one explicit request, closes
+the initiating TLS connection, and admits the worker within a fixed 30-second
+deadline. The existing health loop expires and wipes an unclaimed request even
+when relay DNS is stalled. The CLI correlates boot and generation, observes the
+result with short connections, and never silently repeats an uncertain write.
+All existing resource thresholds remain unchanged. Independent review covered
+the deadline/commit boundary and private-copy lifetime.
+
+The lighting build now uses five owned small relay payload slots and guarded
+exact-size allocations for larger messages. Independent review verified release
+on handling, refusal and stopped-producer cleanup against the pinned WebSocket
+source. The measured target delta is still pending; the gross idle estimate is
+7,682 bytes saved, while the all-large burst can retain 2,563 bytes more than the
+previous fixed payload storage. See [ownership and bounds](../../components/entrance/relay_ingress.md).
+
+The complete repository regression passed **111 tests**. The aggregate lighting
+suite passed **26 groups with zero skips**, including the updated runtime,
+native diagnostic probe and encrypted-wire checks. The relay ownership tests
+include 1,000 reconnect/drain cycles and 20,000 concurrent submissions under
+ASan/UBSan. These are host results; the follow-up firmware has not yet been
+installed or qualified. Private logs are `.local/lights/rc17-regression-tests.log`
+and `.local/lights/rc17-host-checks.log`. A scan of 619 tracked/unignored files
+found no matches for the actual private lighting credentials and no files over
+5 MiB.
+
+The frozen diagnostic app passed **111 offline assertions** and strict local
+signature checks. A fresh launch at 09:14 UTC verified that macOS Bluetooth
+authorization is already allowed. The evidence is
+`.local/lights/ble-permission-20261116-retry.json`. This permission check did not
+scan for or authenticate a gateway and does not prove live BLE operation.
+
+The resumed spare-radio path suffered TCP/TLS failures, then successfully read
+the display's local HTTP arcade status at about 19 minutes uptime. That public
+response alone does not identify a reset cause or establish firmware health.
+The USB hub subsequently re-enumerated when the owner attached another adapter;
+the spare was reidentified by its expected hardware MAC before reconnecting.
+The Mac's Wi-Fi, default route and DNS were not changed.
 
 ## Remaining acceptance work
 

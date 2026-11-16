@@ -1,11 +1,11 @@
 #include "wiz_driver.h"
-#include <assert.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
 static unsigned assertions;
 #define CHECK(x) do { ++assertions; if (!(x)) { \
-    fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); assert(x); } } while (0)
+    fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
 
 static const uint8_t mac[] = {0xa8,0xbb,0x50,0x06,0x03,0x3d};
 static const wiz_wall_clock_t clock_ok = {1790441723, true};
