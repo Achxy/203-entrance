@@ -325,3 +325,12 @@ RGB, supported scenes and effect speed, plus our owner/guest policy. Advanced
 WiZ schedules/rhythms, accessories, native power-on configuration and vendor
 firmware administration are not claimed as complete parity. The
 [capability research](wiz-research.md) tracks those separate requirements.
+
+## External adapter investigation
+
+The subsequent [USB Wi-Fi adapter investigation](usb-adapter-research-2026-11-16.md)
+produced a bounded, route-free transport prototype and passing host tests, but
+the adapter's radio has not completed startup. No RC17 installation or lighting
+qualification is claimed from that work. A fresh pinned status read through the
+existing spare hub still found healthy RC16, settings intact and animation slot
+2 active. The Mac's built-in Wi-Fi and default Internet route were preserved.
