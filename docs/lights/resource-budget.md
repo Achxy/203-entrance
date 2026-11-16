@@ -529,3 +529,27 @@ not subsequent device state. Installation and physical qualification remain
 separate records in the [validation report](validation-2026-11-16.md).
 Do not publish the local directory or treat a test-key binary as a release.
 This report contains no device credentials, Wi-Fi passwords or production keys.
+
+## RC17 follow-up target accounting
+
+Production-key qualification source `7032ef6` adds bounded deferred provisioning
+and owned relay payloads. Independent remeasurement of its map gives 131,933 bytes
+static RAM and 189,363 bytes linker-reported free DRAM. Relative to RC16, BSS
+increases by 2,664 bytes; IRAM text and initialized data are unchanged. The runtime
+object remains 22,120 bytes and the other inspected service/driver/session types
+retain their RC16 sizes.
+
+The relay queue and consumer remove 10,248 bytes of retained dynamic payload
+storage. Subtracting the actual whole-build static increase gives a nominal
+7,584-byte idle saving, before allocator effects. Five maximum-size large
+payloads can still retain 10,245 dynamic bytes alongside the small slabs; their
+bounded burst footprint is higher than the preceding fixed queue. See the
+[ownership contract](../../components/entrance/relay_ingress.md) for admission
+guards and accounting. No allocation or health threshold was reduced.
+
+The signed image remains 1,708,032 bytes with 258,048 bytes of slot headroom;
+target metadata and the full production signature sector were independently
+audited. All five CI jobs passed for the source. Two physical upload attempts
+failed before activation, so **there is no live RC17 heap, BLE/SRP or lighting
+qualification result**. The current device and recovery state are recorded in
+the [validation report](validation-2026-11-16.md).

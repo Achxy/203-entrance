@@ -218,7 +218,7 @@ the deadline/commit boundary and private-copy lifetime.
 The lighting build now uses five owned small relay payload slots and guarded
 exact-size allocations for larger messages. Independent review verified release
 on handling, refusal and stopped-producer cleanup against the pinned WebSocket
-source. The measured target delta is still pending; the gross idle estimate is
+source. The initial gross idle estimate was
 7,682 bytes saved, while the all-large burst can retain 2,563 bytes more than the
 previous fixed payload storage. See [ownership and bounds](../../components/entrance/relay_ingress.md).
 
@@ -244,6 +244,62 @@ response alone does not identify a reset cause or establish firmware health.
 The USB hub subsequently re-enumerated when the owner attached another adapter;
 the spare was reidentified by its expected hardware MAC before reconnecting.
 The Mac's Wi-Fi, default route and DNS were not changed.
+
+### RC17 built and audited; two transfers did not activate
+
+Clean source `7032ef67296c9111728676e375c2f1284a16209e` produced signed RC17,
+SHA-256 `d5cfb3e9248f22ab1ede6dba554ff42b41a76b4790aafb896ec0cbd4bfdbcf10`.
+Its 1,708,032-byte size leaves 258,048 bytes of slot headroom. An independent
+artifact audit verified RSA-3072/PSS, the embedded public key and Montgomery
+values, signature-block CRC, the hash of all pre-signature bytes, and the
+2,880-byte erased signature-sector remainder. Target, version, layout and schema
+match; fault injection is disabled. Software-only signed OTA and rollback remain
+enabled, with hardware secure boot, encryption and anti-rollback disabled.
+The partition binary matches the retained baseline.
+
+Linked static RAM is **131,933 bytes**, 2,664 bytes more than RC16, entirely BSS.
+Removing 10,248 bytes of retained dynamic relay payload storage gives a nominal
+**7,584-byte idle reduction** before allocator overhead. The runtime object
+remains 22,120 bytes. This is target build accounting, not a live RC17 heap or
+authentication measurement. Protected production configuration, RC15 recovery
+artifacts, the RC16 image and the retained earlier default-off image are unchanged.
+
+[All five CI jobs passed](https://github.com/Achxy/203-entrance/actions/runs/43840647310):
+Linux firmware and lighting checks, native macOS app/wire checks and universal
+packaging, console, arcade site, and relay. The signed local candidate remains a
+qualification artifact; it was not published as a firmware release.
+
+Two bounded hub uploads failed before activation. The first reached at least
+655,360 bytes before the board reported a transfer timeout; the second exhausted
+the uploader's three chunk attempts. Both logs are retained separately as
+`.local/lights/rc17-install.log` and `.local/lights/rc17-install-attempt-2.log`.
+No timeout or resource threshold was weakened and no third upload was started.
+
+A final pinned, authenticated read verified **RC16**, a non-trial boot at
+2,201,607 ms uptime, reset reason 1 (power-on), healthy settings and healthy
+services. Animation slot 2 remained in replay mode, with 25,038 rendered frames,
+663 replay loops and the existing 1,350 ms caption period. The failed upload was
+aborted; its phase was `failed`, with no active trial. **The inactive application
+slot was partially overwritten, so `rollback_available` is now false.** The
+running RC16 image is intact; local signed recovery artifacts are retained.
+This is the expected distinction between preserving the running image during an
+interrupted transfer and preserving an older image in the slot being replaced.
+Evidence is `.local/lights/rc17-after-interrupted-transfers.json`.
+
+A private phone-update ZIP was prepared and checked for archive integrity,
+exact image/certificate hashes and exclusion of the administrator password.
+It contains the signed image, public device certificate, hashes and instructions;
+credentials remain in a separate private local file. Phone/browser certificate
+handling and the actual phone upload remain untested. Lighting provisioning,
+live BLE authentication, bulb writes and the combined 60-minute gate remain pending.
+
+The owner's additional USB adapter enumerated as TP-Link/Realtek `2357:0120`
+without a usable network interface. Static inspection of the supplied
+`Archer T2U Plus _V1_190111_Mac.zip` found only Intel kernel-driver executables
+in a package labelled macOS 10.9–10.14; this Mac runs macOS 26.5.2 on arm64.
+The separately inspected experimental driver has no ready route-free TCP bridge
+and lists Tahoe as untested. No driver was installed or executed and no Mac
+network/security setting was changed.
 
 ## Remaining acceptance work
 
